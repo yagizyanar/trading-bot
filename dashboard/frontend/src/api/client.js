@@ -18,6 +18,10 @@ export const api = {
   perfHistory:      (days = 30) => get(`/performance/history?days=${days}`),
   memoryList:       () => get("/memory/"),
   memoryFile:       (name) => get(`/memory/${name}`),
+  longShort:        () => get("/market/long-short"),
+  funding:          () => get("/market/funding"),
+  hyperliquid:      () => get("/market/hyperliquid"),
+  marketSummary:    () => get("/market/summary"),
 };
 
 export function openWebsocket(onMessage) {

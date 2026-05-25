@@ -41,6 +41,9 @@ class SentimentScore(Base):
     news_score: Mapped[Optional[float]] = mapped_column(Float)
     volume_anomaly: Mapped[Optional[float]] = mapped_column(Float)
     yfinance_change: Mapped[Optional[float]] = mapped_column(Float)
+    long_short_ratio: Mapped[Optional[float]] = mapped_column(Float)
+    funding_rate: Mapped[Optional[float]] = mapped_column(Float)
+    hyperliquid_score: Mapped[Optional[float]] = mapped_column(Float)
     unified: Mapped[float] = mapped_column(Float, nullable=False)
     signal: Mapped[str] = mapped_column(String(16), nullable=False)  # BULLISH/BEARISH/NEUTRAL
 

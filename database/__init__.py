@@ -8,4 +8,4 @@ from .models import (  # noqa: F401
     CircuitBreakerEvent,
     PerformanceSnapshot,
 )
-from .migrations import init_db  # noqa: F401
+from .migrations import init_db, upgrade  # noqa: F401

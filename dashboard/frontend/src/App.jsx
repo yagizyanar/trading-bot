@@ -8,6 +8,9 @@ import PositionsTable from "./components/PositionsTable.jsx";
 import SentimentGrid from "./components/SentimentGrid.jsx";
 import RegimeDisplay from "./components/RegimeDisplay.jsx";
 import MemoryViewer from "./components/MemoryViewer.jsx";
+import LongShortGrid from "./components/LongShortGrid.jsx";
+import FundingRateGrid from "./components/FundingRateGrid.jsx";
+import HyperliquidSentiment from "./components/HyperliquidSentiment.jsx";
 import { openWebsocket } from "./api/client.js";
 
 export default function App() {
@@ -43,6 +46,15 @@ export default function App() {
 
       <section>
         <SentimentGrid />
+      </section>
+
+      <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <LongShortGrid />
+        <FundingRateGrid />
+      </section>
+
+      <section>
+        <HyperliquidSentiment />
       </section>
 
       <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
