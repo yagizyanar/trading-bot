@@ -4,9 +4,21 @@ import { api } from "../api/client.js";
 
 const REFRESH_MS = 60_000;
 
-function fmtUSD(n) {
+// Format a number with the right currency convention.
+//   USDT / USDC / other stablecoins → "10,000.00 USDT"  (suffixed, no symbol)
+//   USD / EUR / GBP / etc.          → "$10,000.00"      (Intl currency)
+const STABLE_SUFFIXED = new Set(["USDT", "USDC", "DAI", "FDUSD", "BUSD"]);
+function fmtMoney(n, symbol) {
   if (n == null || isNaN(n)) return "—";
-  return n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 });
+  const sym = symbol || "USD";
+  if (STABLE_SUFFIXED.has(sym)) {
+    return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " " + sym;
+  }
+  try {
+    return n.toLocaleString("en-US", { style: "currency", currency: sym, maximumFractionDigits: 2 });
+  } catch {
+    return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " " + sym;
+  }
 }
 
 function pnlTone(n) {
@@ -73,6 +85,8 @@ export default function PortfolioChart() {
     return [...data, { ts: liveTs, equity: latest.total_equity, peak: latest.peak_equity }];
   })();
 
+  const sym = latest?.currency_symbol || "USD";
+
   return (
     <div className="rounded-xl bg-slate-800 p-4">
       <div className="flex items-start justify-between mb-3">
@@ -80,15 +94,15 @@ export default function PortfolioChart() {
           <div className="text-xs uppercase tracking-wider text-slate-400">Portfolio value</div>
           <div className="flex items-baseline gap-3 mt-1">
             <div className="text-3xl font-bold text-slate-100">
-              {fmtUSD(latest?.total_equity)}
+              {fmtMoney(latest?.total_equity, sym)}
             </div>
             <SourceBadge source={latest?.source} dryRun={latest?.dry_run} />
           </div>
           <div className="flex gap-4 text-xs text-slate-400 mt-1">
-            <span>peak {fmtUSD(latest?.peak_equity)}</span>
+            <span>peak {fmtMoney(latest?.peak_equity, sym)}</span>
             <span className={pnlTone(latest?.daily_pnl_usd)}>
               {latest?.daily_pnl_usd != null
-                ? `${latest.daily_pnl_usd >= 0 ? "+" : ""}${fmtUSD(latest.daily_pnl_usd)} (${(latest.daily_pnl_pct * 100).toFixed(2)}%)`
+                ? `${latest.daily_pnl_usd >= 0 ? "+" : ""}${fmtMoney(latest.daily_pnl_usd, sym)} (${(latest.daily_pnl_pct * 100).toFixed(2)}%)`
                 : "—"}
             </span>
             <span>open {latest?.open_positions ?? 0}</span>
@@ -107,7 +121,7 @@ export default function PortfolioChart() {
           <YAxis stroke="#94a3b8" fontSize={12} domain={["auto", "auto"]} />
           <Tooltip
             contentStyle={{ backgroundColor: "#1e293b", border: "1px solid #334155" }}
-            formatter={(v) => (typeof v === "number" ? fmtUSD(v) : v)}
+            formatter={(v) => (typeof v === "number" ? fmtMoney(v, sym) : v)}
           />
           <Line type="monotone" dataKey="equity" stroke="#10b981" dot={false} strokeWidth={2} />
           <Line type="monotone" dataKey="peak"   stroke="#64748b" dot={false} strokeDasharray="4 4" />
