@@ -66,6 +66,14 @@ def test_live_equity_falls_back_to_total(monkeypatch):
     assert freqtrade_client.live_equity() == 10000.0
 
 
+def test_live_equity_falls_back_when_value_is_zero(monkeypatch):
+    """When fiat_display_currency is disabled, Freqtrade returns value=0.0 — fall back to total."""
+    monkeypatch.setenv("FREQTRADE_API_PASSWORD", "secret")
+    monkeypatch.setattr(freqtrade_client.requests, "get",
+                        lambda *a, **kw: _MockResponse(200, {"total": 10000, "value": 0.0}))
+    assert freqtrade_client.live_equity() == 10000.0
+
+
 def test_returns_none_on_http_error(monkeypatch):
     monkeypatch.setenv("FREQTRADE_API_PASSWORD", "secret")
     monkeypatch.setattr(freqtrade_client.requests, "get",

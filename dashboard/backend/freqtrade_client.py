@@ -82,14 +82,16 @@ def fetch_profit() -> Optional[dict]:
 
 
 def live_equity() -> Optional[float]:
-    """Return the live equity in fiat (USD), or None if Freqtrade unreachable."""
+    """Return the live equity, or None if Freqtrade unreachable.
+
+    `value` is the fiat-converted total (when fiat_display_currency is set).
+    When fiat conversion is disabled, Freqtrade reports value=0.0, so we
+    fall back to `total` (the raw stake-currency sum).
+    """
     bal = fetch_balance()
     if not bal:
         return None
-    # 'value' is the fiat-equivalent total across all currencies; fall back to 'total'.
-    v = bal.get("value")
-    if v is None:
-        v = bal.get("total")
+    v = bal.get("value") or bal.get("total")
     try:
         return float(v) if v is not None else None
     except (TypeError, ValueError):

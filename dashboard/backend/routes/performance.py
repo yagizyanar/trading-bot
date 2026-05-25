@@ -52,9 +52,12 @@ def history(days: int = 30, session: Session = Depends(db)) -> list[dict]:
 
 def _live_to_snapshot(bal: dict, last_db: PerformanceSnapshot | None) -> dict:
     """Synthesize a snapshot dict from Freqtrade's /balance response."""
-    eq_raw = bal.get("value") if bal.get("value") is not None else bal.get("total", 0.0)
+    # When fiat_display_currency is disabled, Freqtrade reports value=0.0; use
+    # total (raw stake-currency sum) in that case. `or` treats both None and 0.0
+    # as missing — fine here because a true zero balance is the same either way.
+    eq_raw = bal.get("value") or bal.get("total") or 0.0
     try:
-        equity = float(eq_raw) if eq_raw is not None else 0.0
+        equity = float(eq_raw)
     except (TypeError, ValueError):
         equity = 0.0
 
