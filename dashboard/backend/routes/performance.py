@@ -63,16 +63,19 @@ def _live_to_snapshot(bal: dict, last_db: PerformanceSnapshot | None) -> dict:
     peak = max(historical_peak, equity)
     drawdown_pct = max(0.0, (peak - equity) / peak) if peak > 0 else 0.0
 
-    starting_capital_pct = bal.get("starting_capital_fiat_ratio") or bal.get("starting_capital_ratio") or 0.0
+    # Freqtrade reports cumulative bot PnL as a *ratio* on the bot's starting capital.
+    # We convert back to USD by multiplying by starting_capital_fiat (not by the full
+    # wallet equity, which would inflate the number when tradable_balance_ratio < 1).
+    raw_ratio = bal.get("starting_capital_fiat_ratio") or bal.get("starting_capital_ratio") or 0.0
     try:
-        cum_pnl_pct = float(starting_capital_pct)
+        cum_pnl_pct = float(raw_ratio)
     except (TypeError, ValueError):
         cum_pnl_pct = 0.0
-    starting_capital_fiat = bal.get("starting_capital_fiat", 0.0)
     try:
-        cum_pnl_usd = equity - float(starting_capital_fiat)
+        bot_start = float(bal.get("starting_capital_fiat", 0.0))
     except (TypeError, ValueError):
-        cum_pnl_usd = 0.0
+        bot_start = 0.0
+    cum_pnl_usd = bot_start * cum_pnl_pct
 
     # Open positions from /status (separate cached call). Falls back to 0.
     status = fetch_status()
