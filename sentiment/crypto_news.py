@@ -100,9 +100,12 @@ def fetch_crypto_news(limit: int = 100) -> list[NewsItem]:
     """Fetch latest crypto news headlines. Returns [] on failure."""
     for attempt in range(1, API_RETRY_ATTEMPTS + 1):
         try:
+            # cryptocurrency.cv uses perPage (capped) + page for pagination.
+            # `limit` was their old param and now returns 400 for values >50.
+            per_page = min(max(1, limit), 100)
             resp = requests.get(
                 CRYPTO_NEWS_URL,
-                params={"limit": limit},
+                params={"perPage": per_page, "page": 1},
                 timeout=API_TIMEOUT_SECONDS,
             )
             resp.raise_for_status()

@@ -39,8 +39,10 @@ def test_score_headlines_aggregates_per_coin():
 
 
 def test_blend_redistributes_for_missing():
-    full = {"news": 0.5, "senticrypt": 0.5, "volume": 0.5, "yfinance": 0.5}
-    partial = {"news": 0.5, "senticrypt": None, "volume": 0.5, "yfinance": None}
+    full = {"news": 0.5, "volume": 0.5, "yfinance": 0.5,
+            "long_short_ratio": 0.5, "funding_rate": 0.5, "hyperliquid": 0.5}
+    partial = {"news": 0.5, "volume": 0.5, "yfinance": None,
+               "long_short_ratio": None, "funding_rate": None, "hyperliquid": None}
     assert _blend(full) == pytest.approx(0.5)
     assert _blend(partial) == pytest.approx(0.5)  # redistributed proportionally
     assert _blend({k: None for k in full}) == 0.0

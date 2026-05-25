@@ -60,7 +60,9 @@ def _fetch_leaderboard(top_n: int = TOP_N_TRADERS) -> list[str]:
     Hyperliquid's payload typically contains a 'leaderboardRows' key. We pick
     the highest accountValue (or a windowPerformance score if present).
     """
-    payload = _post({"type": "leaderboard"})
+    # Leaderboard is undocumented (not on hyperliquid gitbook); reverse-
+    # engineered shape requires `timeWindow`. Valid: "day" | "week" | "month" | "allTime".
+    payload = _post({"type": "leaderboard", "timeWindow": "day"})
     if not payload:
         return []
 

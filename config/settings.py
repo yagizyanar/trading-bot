@@ -91,8 +91,8 @@ MARKOV_THRESHOLD: Final[float] = 0.02
 MARKOV_MIN_TRAIN: Final[int] = 252
 
 FEAR_GREED_URL: Final[str] = "https://api.alternative.me/fng/"
-SENTICRYPT_URL: Final[str] = "https://senticrypt.com/api/v1/sentiment"
 CRYPTO_NEWS_URL: Final[str] = "https://cryptocurrency.cv/api/news"
+HYPERLIQUID_URL: Final[str] = "https://api.hyperliquid.xyz/info"
 
 API_TIMEOUT_SECONDS: Final[float] = 15.0
 API_RETRY_ATTEMPTS: Final[int] = 2

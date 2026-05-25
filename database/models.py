@@ -37,7 +37,6 @@ class SentimentScore(Base):
     coin: Mapped[str] = mapped_column(String(16), nullable=False)
     ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     fear_greed: Mapped[Optional[int]] = mapped_column(Integer)
-    senticrypt: Mapped[Optional[float]] = mapped_column(Float)
     news_score: Mapped[Optional[float]] = mapped_column(Float)
     volume_anomaly: Mapped[Optional[float]] = mapped_column(Float)
     yfinance_change: Mapped[Optional[float]] = mapped_column(Float)

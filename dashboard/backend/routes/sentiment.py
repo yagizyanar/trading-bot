@@ -33,7 +33,7 @@ def latest_per_coin(session: Session = Depends(db)) -> list[dict]:
             out.append({
                 "coin": coin, "unified": 0.0, "signal": "NEUTRAL",
                 "fear_greed": None, "ts": None,
-                "news_score": None, "senticrypt": None,
+                "news_score": None,
                 "volume_anomaly": None, "yfinance_change": None,
             })
         else:
@@ -44,7 +44,6 @@ def latest_per_coin(session: Session = Depends(db)) -> list[dict]:
                 "signal": r.signal,
                 "fear_greed": r.fear_greed,
                 "news_score": r.news_score,
-                "senticrypt": r.senticrypt,
                 "volume_anomaly": r.volume_anomaly,
                 "yfinance_change": r.yfinance_change,
             })

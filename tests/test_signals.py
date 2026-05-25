@@ -56,7 +56,7 @@ def _make_regime(coin="SOL", signal=0.4, regime="Bull"):
 def _make_sentiment(coin="SOL", unified=0.3, label="BULLISH"):
     return UnifiedScore(
         coin=coin, timestamp=datetime.now(timezone.utc),
-        news_score=unified, senticrypt=unified, volume_anomaly=0.0,
+        news_score=unified, volume_anomaly=0.0,
         yfinance_change=0.01,
         long_short_ratio=None, funding_rate=None, hyperliquid_score=None,
         fear_greed=60, fear_greed_multiplier=1.0,

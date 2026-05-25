@@ -1,14 +1,16 @@
 """Unified sentiment combiner.
 
-Produces one unified score per coin in [-1.0, +1.0] by blending the source
-signals defined in PHASE 4 + the new market-data sources added in v2:
+Produces one unified score per coin in [-1.0, +1.0] by blending six per-coin
+signals. SentiCrypt was retired in v3 (domain is dead); its 20% weight was
+redistributed proportionally to the remaining sources, with extra emphasis
+on news (better per-coin signal) and the futures market data (more direct
+positioning information).
 
-  news (FinBERT on headlines)            : 0.25  per-coin
-  senticrypt (market-wide)               : 0.20  applied per-coin
-  volume_anomaly (Binance)               : 0.15  per-coin
+  news (FinBERT on headlines)            : 0.30  per-coin
+  volume_anomaly (Binance)               : 0.20  per-coin
+  long_short_ratio (Binance Futures)     : 0.20  per-coin
+  funding_rate (Binance Futures)         : 0.15  per-coin
   yfinance momentum                      : 0.10  per-coin
-  long_short_ratio (Binance Futures)     : 0.15  per-coin
-  funding_rate (Binance Futures)         : 0.10  per-coin
   hyperliquid (top traders)              : 0.05  per-coin
   -------------------------------------- : 1.00
   fear_greed                             : MULTIPLIER on the weighted sum
@@ -42,19 +44,17 @@ from .binance_market import (
 from .crypto_news import fetch_crypto_news, score_headlines
 from .fear_greed import fetch_fear_greed
 from .hyperliquid import fetch_top_trader_sentiment
-from .senticrypt import fetch_senticrypt
 from .yfinance_data import fetch_yf_price_change
 
 log = logging.getLogger(__name__)
 
 
 _WEIGHTS = {
-    "news": 0.25,
-    "senticrypt": 0.20,
-    "volume": 0.15,
+    "news": 0.30,
+    "volume": 0.20,
+    "long_short_ratio": 0.20,
+    "funding_rate": 0.15,
     "yfinance": 0.10,
-    "long_short_ratio": 0.15,
-    "funding_rate": 0.10,
     "hyperliquid": 0.05,
 }
 assert abs(sum(_WEIGHTS.values()) - 1.0) < 1e-9, "_WEIGHTS must sum to 1.0"
@@ -65,7 +65,6 @@ class UnifiedScore:
     coin: str
     timestamp: datetime
     news_score: Optional[float]
-    senticrypt: Optional[float]
     volume_anomaly: Optional[float]
     yfinance_change: Optional[float]
     long_short_ratio: Optional[float]
@@ -105,7 +104,7 @@ def _blend(components: dict[str, Optional[float]]) -> float:
 
 def compute_unified_scores(
     coins: Iterable[str] = TARGET_COINS,
-    news_limit: int = 200,
+    news_limit: int = 100,
 ) -> dict[str, UnifiedScore]:
     """Fetch all sources and produce one UnifiedScore per requested coin.
 
@@ -119,14 +118,9 @@ def compute_unified_scores(
     fg_mult = fg.multiplier if fg else 1.0
     fg_value = fg.value if fg else None
 
-    sc = fetch_senticrypt()
-    senti_score = sc.score if sc else None
-
     news_items = fetch_crypto_news(limit=news_limit)
     news_scores = score_headlines(news_items)
 
-    # Hyperliquid is fetched in a single round trip (one leaderboard + N
-    # per-trader calls) and returns per-coin scores.
     try:
         hl_readings = fetch_top_trader_sentiment(coins)
     except Exception as exc:  # noqa: BLE001
@@ -158,7 +152,6 @@ def compute_unified_scores(
 
         components = {
             "news": news_signal,
-            "senticrypt": senti_score,
             "volume": vol_signal,
             "yfinance": yf_signal,
             "long_short_ratio": ls_signal,
@@ -172,7 +165,6 @@ def compute_unified_scores(
             coin=coin,
             timestamp=now,
             news_score=news_signal,
-            senticrypt=senti_score,
             volume_anomaly=vol_signal,
             yfinance_change=yf_pct,
             long_short_ratio=ls_ratio,
@@ -196,7 +188,6 @@ def persist_unified_scores(scores: dict[str, UnifiedScore]) -> None:
                 coin=coin,
                 ts=us.timestamp,
                 fear_greed=us.fear_greed,
-                senticrypt=us.senticrypt,
                 news_score=us.news_score,
                 volume_anomaly=us.volume_anomaly,
                 yfinance_change=us.yfinance_change,

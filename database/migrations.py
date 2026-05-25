@@ -22,6 +22,8 @@ _ADDITIVE_MIGRATIONS = (
     "ALTER TABLE sentiment_scores ADD COLUMN IF NOT EXISTS long_short_ratio DOUBLE PRECISION",
     "ALTER TABLE sentiment_scores ADD COLUMN IF NOT EXISTS funding_rate     DOUBLE PRECISION",
     "ALTER TABLE sentiment_scores ADD COLUMN IF NOT EXISTS hyperliquid_score DOUBLE PRECISION",
+    # Retired 2026-05: SentiCrypt source removed (domain dead). Idempotent drop.
+    "ALTER TABLE sentiment_scores DROP COLUMN IF EXISTS senticrypt",
 )
 
 
