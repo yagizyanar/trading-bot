@@ -93,7 +93,10 @@ def _live_to_snapshot(bal: dict, last_db: PerformanceSnapshot | None) -> dict:
         "open_positions": open_count,
         "deployed_capital_pct": 0.0,
         "source": "freqtrade",
-        "currency_symbol": bal.get("symbol", "USD"),
+        # Freqtrade leaves `symbol` empty when fiat_display_currency is disabled.
+        # In that mode `value` is the raw stake-currency total, so report the
+        # stake-currency symbol (USDT) for honest display.
+        "currency_symbol": bal.get("symbol") or bal.get("stake") or "USDT",
         "dry_run": bool(bal.get("note") and "Simulated" in str(bal.get("note", ""))),
     }
 
