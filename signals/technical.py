@@ -83,7 +83,7 @@ def compute_technical_indicators(df: pd.DataFrame) -> Optional[TechnicalSnapshot
     else:
         vol_ratio = 1.0
 
-    trend_up = ema_fast > ema_slow
+    trend_up = bool(ema_fast > ema_slow)
 
     label = technical_label(
         rsi=float(rsi),

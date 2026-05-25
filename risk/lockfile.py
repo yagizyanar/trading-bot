@@ -29,9 +29,12 @@ def write_lockfile(
     peak_equity: float,
     current_equity: float,
     drawdown_pct: float,
-    path: Path = LOCKFILE_PATH,
+    path: Optional[Path] = None,
 ) -> None:
     """Atomically write the lockfile. Bot halts on next routine tick."""
+    # Resolve LOCKFILE_PATH at call time so monkeypatch in tests is honoured.
+    if path is None:
+        path = LOCKFILE_PATH
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     content = (
         f"TRADING LOCKED\n"
