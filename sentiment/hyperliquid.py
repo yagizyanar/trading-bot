@@ -27,8 +27,11 @@ from config.settings import API_RETRY_ATTEMPTS, API_TIMEOUT_SECONDS, TARGET_COIN
 log = logging.getLogger(__name__)
 
 HYPERLIQUID_URL = "https://api.hyperliquid.xyz/info"
+# Leaderboard was removed from /info in 2025 and now ships as a static CDN JSON.
+HYPERLIQUID_LEADERBOARD_URL = "https://stats-data.hyperliquid.xyz/Mainnet/leaderboard"
 TOP_N_TRADERS = 20
 PER_TRADER_TIMEOUT = 8.0  # tighter per-trader to bound total wall time
+DEFAULT_WINDOW = "day"   # ranking window: "day" | "week" | "month" | "allTime"
 
 
 @dataclass(frozen=True)
@@ -54,16 +57,23 @@ def _post(payload: dict, timeout: float = API_TIMEOUT_SECONDS) -> Optional[dict]
     return None
 
 
-def _fetch_leaderboard(top_n: int = TOP_N_TRADERS) -> list[str]:
-    """Return top-N trader addresses sorted by recent PnL.
+def _fetch_leaderboard(top_n: int = TOP_N_TRADERS, window: str = DEFAULT_WINDOW) -> list[str]:
+    """Return top-N trader addresses ranked by `window`'s PnL.
 
-    Hyperliquid's payload typically contains a 'leaderboardRows' key. We pick
-    the highest accountValue (or a windowPerformance score if present).
+    Hyperliquid removed `/info {type: leaderboard}` in 2025; the same data is
+    now published as a static JSON file at HYPERLIQUID_LEADERBOARD_URL. Each
+    row carries `windowPerformances`: a list of [window_name, {pnl, roi, vlm}]
+    tuples. We rank by the requested window's PnL, descending.
     """
-    # Leaderboard is undocumented (not on hyperliquid gitbook); reverse-
-    # engineered shape requires `timeWindow`. Valid: "day" | "week" | "month" | "allTime".
-    payload = _post({"type": "leaderboard", "timeWindow": "day"})
-    if not payload:
+    for attempt in range(1, API_RETRY_ATTEMPTS + 1):
+        try:
+            resp = requests.get(HYPERLIQUID_LEADERBOARD_URL, timeout=API_TIMEOUT_SECONDS)
+            resp.raise_for_status()
+            payload = resp.json()
+            break
+        except Exception as exc:  # noqa: BLE001
+            log.warning("hyperliquid leaderboard attempt %s failed: %s", attempt, exc)
+    else:
         return []
 
     rows = payload.get("leaderboardRows") or payload.get("rows") or []
@@ -72,13 +82,18 @@ def _fetch_leaderboard(top_n: int = TOP_N_TRADERS) -> list[str]:
 
     def _score(row: dict) -> float:
         wp = row.get("windowPerformances") or []
-        if wp:
-            # Each window has [window_name, {"pnl": "...", "roi": "..."}]; pick the
-            # first window's PnL as a stable rank.
+        # Each entry: [window_name, {"pnl": "...", "roi": "...", "vlm": "..."}]
+        for entry in wp:
             try:
-                return float(wp[0][1]["pnl"])
-            except (IndexError, KeyError, ValueError, TypeError):
-                pass
+                name, stats = entry[0], entry[1]
+            except (TypeError, IndexError):
+                continue
+            if name == window:
+                try:
+                    return float(stats.get("pnl", "0"))
+                except (ValueError, TypeError):
+                    return 0.0
+        # Fallback: rank by accountValue
         try:
             return float(row.get("accountValue", "0"))
         except (ValueError, TypeError):
