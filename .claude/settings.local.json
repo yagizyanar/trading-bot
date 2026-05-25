@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Test-Path \"$HOME\\\\.claude\\\\skills\\\\markov-hedge-fund-method\")"
+    ]
+  }
+}
