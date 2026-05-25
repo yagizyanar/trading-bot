@@ -1,6 +1,9 @@
 .env
 .env.*
 !.env.example
+.ssh_helper.py
+config/config-secrets.json
+config/config-prod.json
 
 __pycache__/
 *.py[cod]

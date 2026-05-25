@@ -108,7 +108,7 @@
     "process_throttle_secs": 5
   },
   "bot_name": "trade-sentiment-markov",
-  "telegram": {"enabled": false},
+  "telegram": {"enabled": false, "token": "disabled", "chat_id": "disabled"},
   "api_server": {
     "enabled": true,
     "listen_ip_address": "127.0.0.1",
