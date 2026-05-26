@@ -31,13 +31,14 @@ def test_decide_leverage_requires_both_conditions():
 
 
 def test_correlation_blocks_third_l2():
-    ok, reason = correlation_check("OP", ["MATIC", "ARB"])
+    # POL replaced MATIC in TARGET_COINS / SECTOR_MAP (Polygon rebrand, 2024).
+    ok, reason = correlation_check("OP", ["POL", "ARB"])
     assert not ok
     assert "L2" in reason
 
 
 def test_correlation_allows_different_sectors():
-    ok, _ = correlation_check("LINK", ["MATIC", "ARB"])
+    ok, _ = correlation_check("LINK", ["POL", "ARB"])
     assert ok
 
 
