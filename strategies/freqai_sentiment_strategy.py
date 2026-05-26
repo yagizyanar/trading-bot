@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
-from typing import Any
+from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
@@ -155,6 +155,41 @@ class FreqAISentimentStrategy(IStrategy):  # type: ignore[misc,valid-type]
     # ------------------------------------------------------------------
     # Leverage
     # ------------------------------------------------------------------
+    def custom_stake_amount(
+        self, pair: str, current_time: datetime, current_rate: float,
+        proposed_stake: float, min_stake: float | None, max_stake: float,
+        leverage: float, entry_tag: str | None, side: str, **_: Any,
+    ) -> float:
+        """Override Freqtrade's default sizing with the routine's `position_size_pct`.
+
+        The market_evaluation routine writes a per-coin size to signal_log that
+        already factors in Markov strength, sentiment alignment, technical
+        confirmation, regime (Sideways halving), and the circuit-breaker multiplier.
+        We apply that fraction to the current total wallet:
+
+            stake_USDT = position_size_pct × wallets.get_total(stake_currency)
+
+        Fall back to Freqtrade's proposed_stake on any error (DB unreachable,
+        no signal_log row, wallet info unavailable, etc.) — Freqtrade's default
+        is also safe, just doesn't honour the routine's size decision.
+        """
+        coin = pair.split("/")[0]
+        pct = _latest_position_size_pct(coin)
+        if pct is None or pct <= 0:
+            return float(proposed_stake)
+        try:
+            stake_currency = self.config.get("stake_currency", "USDT")  # type: ignore[attr-defined]
+            total = float(self.wallets.get_total(stake_currency))  # type: ignore[attr-defined]
+        except Exception as exc:  # noqa: BLE001
+            log.warning("custom_stake_amount: wallet lookup failed (%s) — using proposed", exc)
+            return float(proposed_stake)
+
+        stake = total * float(pct)
+        if min_stake is not None:
+            stake = max(float(min_stake), stake)
+        stake = min(stake, float(max_stake))
+        return float(stake)
+
     def leverage(
         self, pair: str, current_time: datetime, current_rate: float,
         proposed_leverage: float, max_leverage: float, side: str, **_: Any,
@@ -243,3 +278,28 @@ def _latest_regime_cached(coin: str, bucket: int) -> str:
 def _latest_regime(coin: str) -> str:
     bucket = int(datetime.now(timezone.utc).timestamp() // 60)
     return _latest_regime_cached(coin, bucket)
+
+
+@lru_cache(maxsize=128)
+def _latest_position_size_pct_cached(coin: str, bucket: int) -> Optional[float]:
+    """Latest position_size_pct from signal_log for this coin. None if SKIP/missing."""
+    try:
+        from database import SessionLocal, SignalLog
+        with SessionLocal() as session:
+            row = (
+                session.query(SignalLog)
+                .filter(SignalLog.coin == coin)
+                .order_by(SignalLog.ts.desc())
+                .first()
+            )
+        if row is None or row.decision == "SKIP":
+            return None
+        return float(row.position_size_pct)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("signal_log position_size_pct lookup failed for %s: %s", coin, exc)
+        return None
+
+
+def _latest_position_size_pct(coin: str) -> Optional[float]:
+    bucket = int(datetime.now(timezone.utc).timestamp() // 60)
+    return _latest_position_size_pct_cached(coin, bucket)
