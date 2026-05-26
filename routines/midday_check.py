@@ -78,6 +78,8 @@ class MiddayCheckRoutine(BaseRoutine):
 
 
 def main() -> None:
+    from .base import setup_routine_logging
+    setup_routine_logging()
     MiddayCheckRoutine().run()
 
 

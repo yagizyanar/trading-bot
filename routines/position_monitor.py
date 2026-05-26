@@ -25,15 +25,107 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
-from config.settings import STOP_LOSS_PCT, TAKE_PROFIT_PCT
+from config.settings import MEMORY_DIR, STOP_LOSS_PCT, TAKE_PROFIT_PCT
 from database import SessionLocal, Trade
-from memory.memory_io import append_lesson, log_circuit_breaker
+from memory.memory_io import append_lesson, append_trade, log_circuit_breaker
 from risk.lockfile import is_locked
 from sentiment.binance_data import fetch_binance_ohlcv
 
 log = logging.getLogger(__name__)
 
 ANOMALOUS_MOVE_THRESHOLD = 0.03  # 3% in 5 minutes
+
+# Watermark file storing the highest Freqtrade trade_id we've mirrored to
+# trade_log.md. Prevents duplicate appends across restarts.
+TRADE_LOG_WATERMARK = MEMORY_DIR / ".last_mirrored_trade_id"
+
+
+def _read_watermark() -> int:
+    if not TRADE_LOG_WATERMARK.exists():
+        return 0
+    try:
+        return int(TRADE_LOG_WATERMARK.read_text(encoding="utf-8").strip())
+    except (ValueError, OSError):
+        return 0
+
+
+def _write_watermark(value: int) -> None:
+    try:
+        TRADE_LOG_WATERMARK.parent.mkdir(parents=True, exist_ok=True)
+        TRADE_LOG_WATERMARK.write_text(str(value), encoding="utf-8")
+    except OSError as exc:
+        log.warning("watermark write failed: %s", exc)
+
+
+def _format_freqtrade_ts(s: str | None) -> str:
+    """Freqtrade '2026-05-26 14:32:28' or ISO → our '2026-05-26 14:32 UTC'."""
+    if not s:
+        return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    try:
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.strftime("%Y-%m-%d %H:%M UTC")
+    except (ValueError, TypeError):
+        return s
+
+
+def _mirror_closed_trades() -> int:
+    """Append any Freqtrade-closed trades newer than the watermark to trade_log.md.
+
+    Freqtrade owns trade state in its own SQLite; our memory/trade_log.md needs
+    a copy so the bot's narrative log reflects reality. Idempotent via the
+    `.last_mirrored_trade_id` watermark.
+
+    Returns the count of new entries appended.
+    """
+    from dashboard.backend.freqtrade_client import fetch_closed_trades
+
+    last_seen = _read_watermark()
+    closed = fetch_closed_trades(limit=200)
+    if not closed:
+        return 0
+
+    new_trades = [t for t in closed if int(t.get("trade_id") or 0) > last_seen]
+    new_trades.sort(key=lambda t: int(t.get("trade_id") or 0))
+    if not new_trades:
+        return 0
+
+    appended = 0
+    max_id = last_seen
+    for t in new_trades:
+        pair = t.get("pair") or ""
+        coin = pair.split("/", 1)[0] if pair else ""
+        if not coin:
+            continue
+        try:
+            close_profit_abs = float(t.get("close_profit_abs") or 0)
+            close_profit_ratio = float(t.get("close_profit") or 0)
+            append_trade(
+                coin=coin,
+                direction="SHORT" if t.get("is_short") else "LONG",
+                entry=float(t.get("open_rate") or 0),
+                exit_price=float(t.get("close_rate") or 0),
+                quantity=float(t.get("amount") or 0),
+                leverage=int(t.get("leverage") or 1),
+                pnl_usd=close_profit_abs,
+                pnl_pct=close_profit_ratio,
+                reason_in=str(t.get("enter_tag") or "freqtrade"),
+                reason_out=str(t.get("exit_reason") or "unknown"),
+                outcome="WIN" if close_profit_abs > 0 else "LOSS",
+                ts=_format_freqtrade_ts(t.get("close_date")),
+            )
+            appended += 1
+            tid = int(t.get("trade_id") or 0)
+            if tid > max_id:
+                max_id = tid
+        except Exception as exc:  # noqa: BLE001
+            log.warning("mirror append failed for trade_id=%s pair=%s: %s",
+                        t.get("trade_id"), pair, exc)
+
+    if max_id > last_seen:
+        _write_watermark(max_id)
+    return appended
 
 
 @dataclass(frozen=True)
@@ -197,6 +289,15 @@ def run() -> MonitorResult:
     source = "none"
     err: Optional[str] = None
 
+    # Mirror any newly-closed Freqtrade trades to memory/trade_log.md. Idempotent
+    # — uses a trade_id watermark — so safe to run every minute.
+    try:
+        mirrored = _mirror_closed_trades()
+        if mirrored:
+            log.info("mirrored %s newly-closed trades to trade_log.md", mirrored)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("mirror_closed_trades failed: %s", exc)
+
     # Prefer Freqtrade's view of open positions; fall back to our trades table
     # if Freqtrade is unreachable (then we may also need to actively close
     # SL/TP trades since nothing else is doing it).
@@ -256,6 +357,8 @@ def run() -> MonitorResult:
 
 
 def main() -> int:
+    from .base import setup_routine_logging
+    setup_routine_logging()
     res = run()
     log.info(
         "position_monitor: source=%s checked=%s sl=%s tp=%s anomalies=%s skipped=%s err=%s",

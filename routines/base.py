@@ -105,12 +105,102 @@ class BaseRoutine(ABC):
         """Implement routine-specific logic. Return an optional extras dict."""
 
 
-def _default_portfolio_snapshot() -> dict:
-    """Fallback portfolio snapshot when no callable is provided.
+def setup_routine_logging() -> None:
+    """Configure the root logger so routine log.info calls reach stdout.
 
-    Pulls the most recent PerformanceSnapshot row from the DB. If none exists,
-    returns a flat zero-state assuming a paper wallet of dry_run_wallet from config.
+    Cron redirects stdout+stderr to /var/log/trading-bot/<routine>.log. Without
+    this call, log.info messages disappear (Python's root logger defaults to
+    WARNING with no handlers) and the per-routine log files stay 0 bytes.
+
+    Safe to call multiple times — only adds a handler if none is present.
     """
+    root = logging.getLogger()
+    if not root.handlers:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+
+
+def _default_portfolio_snapshot() -> dict:
+    """Live portfolio snapshot.
+
+    Preferred source is Freqtrade's REST API — equity computed by the
+    handoff §5 reconcilable formula:
+        equity = DRY_RUN_WALLET + closed_pnl + sum(open profit_abs)
+    Falls back to the most recent PerformanceSnapshot row, then to zero state.
+
+    daily_pnl_pct = closed_pnl_since_midnight_UTC / DRY_RUN_WALLET
+    weekly_pnl_pct uses the same denominator and Monday 00:00 UTC start.
+    """
+    try:
+        from datetime import timedelta
+        from config.settings import DRY_RUN_WALLET
+        from dashboard.backend.freqtrade_client import (
+            fetch_closed_trades, fetch_profit, fetch_status,
+        )
+
+        status = fetch_status()
+        profit = fetch_profit()
+        closed = fetch_closed_trades(limit=200)
+
+        if status is None and profit is None:
+            raise RuntimeError("Freqtrade API unreachable")
+
+        open_pnl = sum(float(t.get("profit_abs") or 0) for t in (status or []))
+        closed_pnl_all = float((profit or {}).get("profit_closed_coin", 0) or 0)
+        equity = DRY_RUN_WALLET + open_pnl + closed_pnl_all
+
+        now = datetime.now(timezone.utc)
+        midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        week_start = midnight - timedelta(days=midnight.weekday())  # Monday 00:00 UTC
+
+        daily_closed_pnl = 0.0
+        weekly_closed_pnl = 0.0
+        for t in (closed or []):
+            close_str = t.get("close_date")
+            if not close_str:
+                continue
+            try:
+                close_dt = datetime.fromisoformat(close_str.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            if close_dt.tzinfo is None:
+                close_dt = close_dt.replace(tzinfo=timezone.utc)
+            pnl = float(t.get("close_profit_abs") or 0)
+            if close_dt >= midnight:
+                daily_closed_pnl += pnl
+            if close_dt >= week_start:
+                weekly_closed_pnl += pnl
+
+        daily_pnl_pct = daily_closed_pnl / DRY_RUN_WALLET if DRY_RUN_WALLET else 0.0
+        weekly_pnl_pct = weekly_closed_pnl / DRY_RUN_WALLET if DRY_RUN_WALLET else 0.0
+
+        # Peak equity: max of historical peak and current equity.
+        peak = equity
+        try:
+            from database import PerformanceSnapshot, SessionLocal
+            with SessionLocal() as session:
+                row = (
+                    session.query(PerformanceSnapshot)
+                    .order_by(PerformanceSnapshot.peak_equity.desc())
+                    .first()
+                )
+            if row is not None and row.peak_equity > peak:
+                peak = row.peak_equity
+        except Exception:  # noqa: BLE001
+            pass
+
+        return {
+            "equity": equity,
+            "peak_equity": peak,
+            "daily_pnl_pct": daily_pnl_pct,
+            "weekly_pnl_pct": weekly_pnl_pct,
+        }
+    except Exception as exc:  # noqa: BLE001
+        log.warning("freqtrade portfolio snapshot failed (%s) — falling back to DB", exc)
+
     try:
         from database import PerformanceSnapshot, SessionLocal
         with SessionLocal() as session:

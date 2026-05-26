@@ -199,6 +199,8 @@ def _persist_signal_log(decisions: list[SignalDecision]) -> None:
 
 
 def main() -> None:
+    from .base import setup_routine_logging
+    setup_routine_logging()
     MarketEvaluationRoutine().run()
 
 

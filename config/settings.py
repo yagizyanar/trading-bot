@@ -41,6 +41,19 @@ DRY_RUN: Final[bool] = os.getenv("DRY_RUN", "true").lower() == "true"
 TIMEZONE: Final[str] = os.getenv("TIMEZONE", "UTC")
 LOG_LEVEL: Final[str] = os.getenv("LOG_LEVEL", "INFO").upper()
 
+# Paper wallet — must match Freqtrade's dry_run_wallet in config/config.json so
+# equity = DRY_RUN_WALLET + closed_pnl + sum(open_profit_abs) reconciles with
+# the trade-by-trade positions view (see PROJECT_HANDOFF.md §5 commit 2bb46cd).
+def _load_dry_run_wallet() -> float:
+    import json
+    cfg_path = PROJECT_ROOT / "config" / "config.json"
+    try:
+        return float(json.loads(cfg_path.read_text(encoding="utf-8")).get("dry_run_wallet", 10000.0))
+    except Exception:
+        return 10000.0
+
+DRY_RUN_WALLET: Final[float] = _load_dry_run_wallet()
+
 LOCKFILE_PATH: Final[Path] = PROJECT_ROOT / "TRADING_LOCKED.txt"
 MEMORY_DIR: Final[Path] = PROJECT_ROOT / "memory"
 LOGS_DIR: Final[Path] = PROJECT_ROOT / "logs"

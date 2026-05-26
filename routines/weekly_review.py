@@ -104,6 +104,8 @@ def _sharpe(returns: list[float]) -> float:
 
 
 def main() -> None:
+    from .base import setup_routine_logging
+    setup_routine_logging()
     WeeklyReviewRoutine().run()
 
 

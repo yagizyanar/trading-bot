@@ -175,6 +175,30 @@ def append_strategy_note(
     _append(STRATEGY_NOTES, block)
 
 
+def append_daily_summary(
+    date_str: str,
+    equity: float,
+    wins: int,
+    losses: int,
+    daily_pnl_usd: float,
+    daily_pnl_pct: float,
+    open_positions: int,
+    circuit_breaker_state: str,
+    ts: Optional[str] = None,
+) -> None:
+    """Append a [DAY CLOSE] summary block to trade_log.md."""
+    ts = ts or _utc_now()
+    block = (
+        f"\n## {ts} [DAY CLOSE {date_str}]\n"
+        f"Equity: ${equity:.2f}\n"
+        f"Daily P&L: ${daily_pnl_usd:+.2f} ({daily_pnl_pct:+.2%})\n"
+        f"Closed trades today: {wins} wins, {losses} losses\n"
+        f"Open positions: {open_positions}\n"
+        f"Circuit breaker: {circuit_breaker_state}\n"
+    )
+    _append(TRADE_LOG, block)
+
+
 def log_circuit_breaker(
     level: str,
     trigger: str,
