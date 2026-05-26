@@ -4,9 +4,10 @@ import {
 } from "recharts";
 import { api } from "../api/client.js";
 
-// Rolling buffer of WebSocket-pushed snapshots — at 5s cadence, 360 = 30 minutes.
-// Bumped up to 720 (60 min) so an open trading window stays visible.
-const BUFFER_MAX = 720;
+// Rolling buffer. Sized for 30 days of 5-min DB snapshots (≈8640 points)
+// plus headroom for the WS-pushed live tail at 5s cadence.
+const BUFFER_MAX = 10_000;
+const HISTORY_DAYS = 30;
 const FALLBACK_POLL_MS = 30_000;
 
 // Stablecoins display as suffixed (USDT, USDC etc.); fiat as native currency.
@@ -53,7 +54,18 @@ function SourceBadge({ source, dryRun }) {
 }
 
 function fmtClock(d) {
-  return d.toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  // Same-day points: HH:MM:SS (live-tail granularity).
+  // Older points: MM-DD HH:MM so the X-axis stays unambiguous across days.
+  const today = new Date();
+  const sameDay = d.toDateString() === today.toDateString();
+  if (sameDay) {
+    return d.toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  }
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  return `${mm}-${dd} ${hh}:${mi}`;
 }
 
 export default function PortfolioChart({ live }) {
@@ -64,10 +76,54 @@ export default function PortfolioChart({ live }) {
   const [haveWsData, setHaveWsData] = useState(false);
   const [err, setErr] = useState(null);
 
-  // Rolling buffer of 5s-cadence ws snapshots. Each entry:
+  // Buffer holds the combined historical DB snapshots (pre-populated on mount
+  // from /api/performance/history) AND the WS-pushed live tail. Each entry:
   //   { tsLabel, tsEpoch, equity, daily_pnl, weekly_pnl }
   const bufferRef = useRef([]);
   const [buffer, setBuffer] = useState([]);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
+
+  // On mount, fetch 30 days of performance_snapshots and seed the buffer
+  // so the chart isn't blank on page refresh. Merges with any WS pushes
+  // that arrived during the fetch.
+  useEffect(() => {
+    let cancelled = false;
+    api.perfHistory(HISTORY_DAYS).then((rows) => {
+      if (cancelled) return;
+      const seeded = (rows || []).map((r) => {
+        const d = new Date(r.ts);
+        return {
+          tsLabel:    fmtClock(d),
+          tsEpoch:    d.getTime(),
+          equity:     r.total_equity,
+          daily_pnl:  r.daily_pnl_usd,
+          weekly_pnl: r.weekly_pnl_usd,
+        };
+      });
+      // Merge with any WS pushes that landed before history arrived.
+      const all = [...seeded, ...bufferRef.current].sort((a, b) => a.tsEpoch - b.tsEpoch);
+      // Dedupe points within 1 second of each other (history's last row may
+      // overlap with the first WS push).
+      const deduped = [];
+      for (const p of all) {
+        const last = deduped[deduped.length - 1];
+        if (last && Math.abs(last.tsEpoch - p.tsEpoch) < 1000) {
+          deduped[deduped.length - 1] = p;
+        } else {
+          deduped.push(p);
+        }
+      }
+      const trimmed = deduped.slice(-BUFFER_MAX);
+      bufferRef.current = trimmed;
+      setBuffer(trimmed);
+      setHistoryLoaded(true);
+    }).catch((e) => {
+      if (cancelled) return;
+      setErr(`history: ${e.message}`);
+      setHistoryLoaded(true);  // unblock UI even on failure
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   // On every live update, append a buffer point and store latest
   useEffect(() => {

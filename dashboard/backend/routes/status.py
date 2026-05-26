@@ -39,10 +39,10 @@ _FALLBACK_SPECS: list[tuple[str, str]] = [
     ("weekly_review",     "0 20 * * 0"),
 ]
 
-# `position_monitor` fires every minute — it would always dominate the
-# "next routine" widget and isn't user-meaningful. Hide it from the picker
-# but include other intra-day routines.
-HIDDEN_FROM_NEXT_WIDGET = {"position_monitor"}
+# `position_monitor` fires every minute and `snapshot_writer` every 5 min —
+# both would dominate the "next routine" widget and aren't user-meaningful.
+# Hide them from the picker but include other intra-day routines.
+HIDDEN_FROM_NEXT_WIDGET = {"position_monitor", "snapshot_writer"}
 
 
 # ---------------------------------------------------------------------------
