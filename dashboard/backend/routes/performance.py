@@ -13,9 +13,20 @@ from sqlalchemy.orm import Session
 
 from database import PerformanceSnapshot
 from ..deps import db
-from ..freqtrade_client import fetch_balance, fetch_status
+from ..freqtrade_client import fetch_balance, fetch_pnl_breakdown, fetch_status
 
 router = APIRouter()
+
+
+def _baseline_equity_before(session, when: datetime, default: float) -> float:
+    """Latest performance_snapshots.total_equity strictly before `when`. Fallback if none."""
+    row = (
+        session.query(PerformanceSnapshot)
+        .filter(PerformanceSnapshot.ts < when)
+        .order_by(PerformanceSnapshot.ts.desc())
+        .first()
+    )
+    return float(row.total_equity) if row is not None else float(default)
 
 
 @router.get("/latest")
@@ -27,8 +38,9 @@ def latest_snapshot(session: Session = Depends(db)) -> dict:
     )
 
     bal = fetch_balance()
-    if bal is not None:
-        return _live_to_snapshot(bal, last_db)
+    pnl = fetch_pnl_breakdown()
+    if bal is not None or pnl is not None:
+        return _live_to_snapshot(session, bal or {}, pnl, last_db)
 
     # Freqtrade unreachable — fall back to DB snapshot
     if last_db is None:
@@ -50,55 +62,68 @@ def history(days: int = 30, session: Session = Depends(db)) -> list[dict]:
     return [_serialize(r) for r in rows]
 
 
-def _live_to_snapshot(bal: dict, last_db: PerformanceSnapshot | None) -> dict:
-    """Synthesize a snapshot dict from Freqtrade's /balance response."""
-    # When fiat_display_currency is disabled, Freqtrade reports value=0.0; use
-    # total (raw stake-currency sum) in that case. `or` treats both None and 0.0
-    # as missing — fine here because a true zero balance is the same either way.
-    eq_raw = bal.get("value") or bal.get("total") or 0.0
-    try:
-        equity = float(eq_raw)
-    except (TypeError, ValueError):
-        equity = 0.0
+def _live_to_snapshot(session, bal: dict, pnl: dict | None,
+                      last_db: PerformanceSnapshot | None) -> dict:
+    """Compute a live snapshot using the reconcilable formula:
 
-    # Peak: max of historical peak and current equity (don't regress peak below historical)
+        equity = starting_wallet + open_pnl + closed_pnl
+
+    This matches exactly what the positions table shows when you sum its
+    P&L column (open_pnl) plus the closed-trades view (closed_pnl). No
+    phantom drift vs Freqtrade's internal `balance.total` accounting.
+
+    daily_pnl/weekly_pnl come from diffing current equity against the
+    latest performance_snapshots row before today's / this week's
+    00:00 UTC boundary. Falls back to starting_wallet if no snapshot
+    exists yet (the bot just started).
+    """
+    from config.settings import PROJECT_ROOT
+    import json
+
+    # Starting wallet from config.json (dry_run_wallet)
+    try:
+        with open(PROJECT_ROOT / "config" / "config.json") as f:
+            cfg = json.load(f)
+        starting_wallet = float(cfg.get("dry_run_wallet", 10000))
+    except Exception:
+        starting_wallet = 10000.0
+
+    open_pnl = float((pnl or {}).get("open_pnl", 0.0) or 0.0)
+    closed_pnl = float((pnl or {}).get("closed_pnl", 0.0) or 0.0)
+    equity = starting_wallet + open_pnl + closed_pnl
+
+    # Daily / weekly baselines from prior snapshots
+    now = datetime.now(timezone.utc)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    monday_start = today_start - timedelta(days=now.weekday())
+    daily_base = _baseline_equity_before(session, today_start, default=starting_wallet)
+    weekly_base = _baseline_equity_before(session, monday_start, default=starting_wallet)
+    daily_pnl_usd = equity - daily_base
+    weekly_pnl_usd = equity - weekly_base
+    daily_pnl_pct = (daily_pnl_usd / daily_base) if daily_base > 0 else 0.0
+    weekly_pnl_pct = (weekly_pnl_usd / weekly_base) if weekly_base > 0 else 0.0
+
     historical_peak = float(last_db.peak_equity) if last_db else equity
     peak = max(historical_peak, equity)
     drawdown_pct = max(0.0, (peak - equity) / peak) if peak > 0 else 0.0
 
-    # Freqtrade reports cumulative bot PnL as a *ratio* on the bot's starting capital.
-    # We convert back to USD by multiplying by starting_capital_fiat (not by the full
-    # wallet equity, which would inflate the number when tradable_balance_ratio < 1).
-    raw_ratio = bal.get("starting_capital_fiat_ratio") or bal.get("starting_capital_ratio") or 0.0
-    try:
-        cum_pnl_pct = float(raw_ratio)
-    except (TypeError, ValueError):
-        cum_pnl_pct = 0.0
-    try:
-        bot_start = float(bal.get("starting_capital_fiat", 0.0))
-    except (TypeError, ValueError):
-        bot_start = 0.0
-    cum_pnl_usd = bot_start * cum_pnl_pct
-
-    # Open positions from /status (separate cached call). Falls back to 0.
     status = fetch_status()
     open_count = len(status) if isinstance(status, list) else 0
 
     return {
-        "ts": datetime.now(timezone.utc).isoformat(),
+        "ts": now.isoformat(),
         "total_equity": equity,
-        "daily_pnl_usd": cum_pnl_usd,
-        "daily_pnl_pct": cum_pnl_pct,
-        "weekly_pnl_usd": cum_pnl_usd,    # /balance doesn't split by window
-        "weekly_pnl_pct": cum_pnl_pct,
+        "open_pnl_usd": open_pnl,
+        "closed_pnl_usd": closed_pnl,
+        "daily_pnl_usd": daily_pnl_usd,
+        "daily_pnl_pct": daily_pnl_pct,
+        "weekly_pnl_usd": weekly_pnl_usd,
+        "weekly_pnl_pct": weekly_pnl_pct,
         "drawdown_pct": drawdown_pct,
         "peak_equity": peak,
         "open_positions": open_count,
         "deployed_capital_pct": 0.0,
         "source": "freqtrade",
-        # Freqtrade leaves `symbol` empty when fiat_display_currency is disabled.
-        # In that mode `value` is the raw stake-currency total, so report the
-        # stake-currency symbol (USDT) for honest display.
         "currency_symbol": bal.get("symbol") or bal.get("stake") or "USDT",
         "dry_run": bool(bal.get("note") and "Simulated" in str(bal.get("note", ""))),
     }

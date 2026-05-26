@@ -1,13 +1,15 @@
-import React, { useEffect, useState } from "react";
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import React, { useEffect, useRef, useState } from "react";
+import {
+  ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
+} from "recharts";
 import { api } from "../api/client.js";
 
-const REFRESH_MS = 60_000;          // 30d history poll — slow chart updates
-const LATEST_FALLBACK_MS = 30_000;  // /latest fallback poll when WS is absent
+// Rolling buffer of WebSocket-pushed snapshots — at 5s cadence, 360 = 30 minutes.
+// Bumped up to 720 (60 min) so an open trading window stays visible.
+const BUFFER_MAX = 720;
+const FALLBACK_POLL_MS = 30_000;
 
-// Format a number with the right currency convention.
-//   USDT / USDC / other stablecoins → "10,000.00 USDT"  (suffixed, no symbol)
-//   USD / EUR / GBP / etc.          → "$10,000.00"      (Intl currency)
+// Stablecoins display as suffixed (USDT, USDC etc.); fiat as native currency.
 const STABLE_SUFFIXED = new Set(["USDT", "USDC", "DAI", "FDUSD", "BUSD"]);
 function fmtMoney(n, symbol) {
   if (n == null || isNaN(n)) return "—";
@@ -50,61 +52,78 @@ function SourceBadge({ source, dryRun }) {
   );
 }
 
-export default function PortfolioChart({ live }) {
-  const [latest, setLatest] = useState(null);
-  const [data, setData] = useState([]);
-  const [err, setErr] = useState(null);
-  const [haveWsData, setHaveWsData] = useState(false);
+function fmtClock(d) {
+  return d.toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
 
-  // Prefer WebSocket-pushed performance snapshot (5s cadence). Fall back to
-  // polling /api/performance/latest when the WS hasn't delivered.
+export default function PortfolioChart({ live }) {
+  // The single source of truth for "latest values": the most recent WS push
+  // (or polled /latest snapshot when WS hasn't delivered yet). Big number,
+  // peak line, and chart "now" point all read from the same object.
+  const [latest, setLatest] = useState(null);
+  const [haveWsData, setHaveWsData] = useState(false);
+  const [err, setErr] = useState(null);
+
+  // Rolling buffer of 5s-cadence ws snapshots. Each entry:
+  //   { tsLabel, tsEpoch, equity, daily_pnl, weekly_pnl }
+  const bufferRef = useRef([]);
+  const [buffer, setBuffer] = useState([]);
+
+  // On every live update, append a buffer point and store latest
   useEffect(() => {
-    if (live && live.performance) {
-      setLatest(live.performance);
-      setHaveWsData(true);
+    const perf = live?.performance;
+    if (!perf || perf.total_equity == null) return;
+    setLatest(perf);
+    setHaveWsData(true);
+    const now = new Date(perf.ts || Date.now());
+    const point = {
+      tsLabel: fmtClock(now),
+      tsEpoch: now.getTime(),
+      equity:     perf.total_equity,
+      daily_pnl:  perf.daily_pnl_usd,
+      weekly_pnl: perf.weekly_pnl_usd,
+    };
+    // Dedup against the most recent entry (same timestamp → replace, not duplicate)
+    const buf = bufferRef.current;
+    const last = buf[buf.length - 1];
+    let next;
+    if (last && Math.abs(last.tsEpoch - point.tsEpoch) < 1000) {
+      next = [...buf.slice(0, -1), point];
+    } else {
+      next = [...buf, point];
     }
+    if (next.length > BUFFER_MAX) next = next.slice(-BUFFER_MAX);
+    bufferRef.current = next;
+    setBuffer(next);
   }, [live]);
 
+  // Fallback poll for /api/performance/latest when WS hasn't delivered yet
   useEffect(() => {
     let cancelled = false;
     const loadLatest = () => {
       if (haveWsData) return;
-      api.perfLatest().then((l) => { if (!cancelled) setLatest(l); }).catch((e) => !cancelled && setErr(e.message));
-    };
-    loadLatest();
-    const id = setInterval(loadLatest, LATEST_FALLBACK_MS);
-    return () => { cancelled = true; clearInterval(id); };
-  }, [haveWsData]);
-
-  // 30-day history — keep a slow poll, this doesn't need live updates
-  useEffect(() => {
-    let cancelled = false;
-    const loadHistory = () => {
-      api.perfHistory(30).then((h) => {
+      api.perfLatest().then((l) => {
         if (cancelled) return;
-        setData(h.map((r) => ({
-          ts: new Date(r.ts).toLocaleDateString(),
-          equity: r.total_equity,
-          peak: r.peak_equity,
-        })));
+        setLatest(l);
         setErr(null);
       }).catch((e) => !cancelled && setErr(e.message));
     };
-    loadHistory();
-    const id = setInterval(loadHistory, REFRESH_MS);
+    loadLatest();
+    const id = setInterval(loadLatest, FALLBACK_POLL_MS);
     return () => { cancelled = true; clearInterval(id); };
-  }, []);
+  }, [haveWsData]);
 
-  // Append the latest live point so the chart's tail shows it even before day_close persists a row.
-  const chartData = (() => {
-    if (!latest || latest.total_equity == null) return data;
-    const liveTs = latest.source === "freqtrade" ? "now" : new Date(latest.ts).toLocaleDateString();
-    const last = data[data.length - 1];
-    if (last && last.ts === liveTs) return data;
-    return [...data, { ts: liveTs, equity: latest.total_equity, peak: latest.peak_equity }];
-  })();
+  const sym = latest?.currency_symbol || "USDT";
 
-  const sym = latest?.currency_symbol || "USD";
+  // Y-axis domains — equity gets its own scale; daily/weekly share the right axis
+  const equityValues = buffer.map((b) => b.equity).filter((v) => v != null);
+  const equityMin = equityValues.length ? Math.min(...equityValues) : 0;
+  const equityMax = equityValues.length ? Math.max(...equityValues) : 0;
+  const equityRange = equityMax - equityMin;
+  const equityPad = Math.max(equityRange * 0.15, 5);
+  const equityDomain = equityValues.length
+    ? [equityMin - equityPad, equityMax + equityPad]
+    : ["auto", "auto"];
 
   return (
     <div className="rounded-xl bg-slate-800 p-4">
@@ -117,34 +136,44 @@ export default function PortfolioChart({ live }) {
             </div>
             <SourceBadge source={latest?.source} dryRun={latest?.dry_run} />
           </div>
-          <div className="flex gap-4 text-xs text-slate-400 mt-1">
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-400 mt-1">
             <span>peak {fmtMoney(latest?.peak_equity, sym)}</span>
             <span className={pnlTone(latest?.daily_pnl_usd)}>
-              {latest?.daily_pnl_usd != null
+              daily {latest?.daily_pnl_usd != null
                 ? `${latest.daily_pnl_usd >= 0 ? "+" : ""}${fmtMoney(latest.daily_pnl_usd, sym)} (${(latest.daily_pnl_pct * 100).toFixed(2)}%)`
+                : "—"}
+            </span>
+            <span className={pnlTone(latest?.weekly_pnl_usd)}>
+              weekly {latest?.weekly_pnl_usd != null
+                ? `${latest.weekly_pnl_usd >= 0 ? "+" : ""}${fmtMoney(latest.weekly_pnl_usd, sym)} (${(latest.weekly_pnl_pct * 100).toFixed(2)}%)`
                 : "—"}
             </span>
             <span>open {latest?.open_positions ?? 0}</span>
           </div>
         </div>
         <div className="text-xs text-slate-500 text-right">
-          {haveWsData ? "live · 5s" : "polling"} · 30d history
+          {haveWsData ? "live · 5s" : "polling"} · last {buffer.length}× pts
           {err && <div className="text-rose-400 mt-1">err: {err}</div>}
         </div>
       </div>
 
-      <ResponsiveContainer width="100%" height={220}>
-        <LineChart data={chartData}>
+      <ResponsiveContainer width="100%" height={240}>
+        <ComposedChart data={buffer} margin={{ left: 4, right: 4, top: 4, bottom: 4 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-          <XAxis dataKey="ts" stroke="#94a3b8" fontSize={12} />
-          <YAxis stroke="#94a3b8" fontSize={12} domain={["auto", "auto"]} />
+          <XAxis dataKey="tsLabel" stroke="#94a3b8" fontSize={11} minTickGap={40} />
+          <YAxis yAxisId="eq"  orientation="left"  stroke="#10b981" fontSize={11} domain={equityDomain}
+                 tickFormatter={(v) => v.toFixed(0)} width={70} />
+          <YAxis yAxisId="pnl" orientation="right" stroke="#94a3b8" fontSize={11} width={56}
+                 tickFormatter={(v) => (v >= 0 ? "+" : "") + v.toFixed(0)} />
           <Tooltip
             contentStyle={{ backgroundColor: "#1e293b", border: "1px solid #334155" }}
-            formatter={(v) => (typeof v === "number" ? fmtMoney(v, sym) : v)}
+            formatter={(v, name) => [typeof v === "number" ? fmtMoney(v, sym) : v, name]}
           />
-          <Line type="monotone" dataKey="equity" stroke="#10b981" dot={false} strokeWidth={2} />
-          <Line type="monotone" dataKey="peak"   stroke="#64748b" dot={false} strokeDasharray="4 4" />
-        </LineChart>
+          <Legend wrapperStyle={{ fontSize: 11 }} />
+          <Line yAxisId="eq"  type="monotone" dataKey="equity"     stroke="#10b981" strokeWidth={2} dot={false} name="equity" />
+          <Line yAxisId="pnl" type="monotone" dataKey="daily_pnl"  stroke="#38bdf8" strokeWidth={1.5} dot={false} name="daily P&L" />
+          <Line yAxisId="pnl" type="monotone" dataKey="weekly_pnl" stroke="#a78bfa" strokeWidth={1.5} dot={false} strokeDasharray="4 4" name="weekly P&L" />
+        </ComposedChart>
       </ResponsiveContainer>
     </div>
   );

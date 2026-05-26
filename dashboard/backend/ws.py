@@ -23,6 +23,7 @@ from risk.lockfile import is_locked
 
 from .freqtrade_client import (
     fetch_balance,
+    fetch_pnl_breakdown,
     fetch_status,
     map_freqtrade_trade,
 )
@@ -30,51 +31,6 @@ from .freqtrade_client import (
 log = logging.getLogger(__name__)
 
 _PUSH_INTERVAL_SECONDS = 5
-
-
-def _live_performance(bal, last_db):
-    """Inline copy of routes.performance._live_to_snapshot to avoid circular imports.
-
-    Kept short and read-only; if you tweak the live-balance fields, mirror
-    those changes in routes/performance.py as well.
-    """
-    from config.settings import STOP_LOSS_PCT  # noqa: F401 (kept for parity)
-    eq_raw = bal.get("value") or bal.get("total") or 0.0
-    try:
-        equity = float(eq_raw)
-    except (TypeError, ValueError):
-        equity = 0.0
-
-    historical_peak = float(last_db.peak_equity) if last_db else equity
-    peak = max(historical_peak, equity)
-    drawdown_pct = max(0.0, (peak - equity) / peak) if peak > 0 else 0.0
-
-    raw_ratio = bal.get("starting_capital_fiat_ratio") or bal.get("starting_capital_ratio") or 0.0
-    try:
-        cum_pnl_pct = float(raw_ratio)
-    except (TypeError, ValueError):
-        cum_pnl_pct = 0.0
-    try:
-        bot_start = float(bal.get("starting_capital_fiat", 0.0))
-    except (TypeError, ValueError):
-        bot_start = 0.0
-    cum_pnl_usd = bot_start * cum_pnl_pct
-
-    return {
-        "ts": datetime.now(timezone.utc).isoformat(),
-        "total_equity": equity,
-        "daily_pnl_usd": cum_pnl_usd,
-        "daily_pnl_pct": cum_pnl_pct,
-        "weekly_pnl_usd": cum_pnl_usd,
-        "weekly_pnl_pct": cum_pnl_pct,
-        "drawdown_pct": drawdown_pct,
-        "peak_equity": peak,
-        "open_positions": 0,  # filled in by caller from `positions` list
-        "deployed_capital_pct": 0.0,
-        "source": "freqtrade",
-        "currency_symbol": bal.get("symbol") or bal.get("stake") or "USDT",
-        "dry_run": bool(bal.get("note") and "Simulated" in str(bal.get("note", ""))),
-    }
 
 
 async def _snapshot() -> dict:
@@ -98,9 +54,11 @@ async def _snapshot() -> dict:
         log.warning("ws positions fetch failed: %s", exc)
         payload["positions"] = None
 
-    # Live performance snapshot
+    # Live performance snapshot — uses the route's helper directly so the
+    # WS payload and /api/performance/latest produce identical numbers.
     try:
         bal = fetch_balance()
+        pnl = fetch_pnl_breakdown()
         with SessionLocal() as session:
             last_db = (
                 session.query(PerformanceSnapshot)
@@ -108,26 +66,27 @@ async def _snapshot() -> dict:
                 .first()
             )
             sent_count = session.query(SentimentScore).count()
-        if bal is not None:
-            perf = _live_performance(bal, last_db)
-        elif last_db is not None:
-            perf = {
-                "ts": last_db.ts.isoformat(),
-                "total_equity": last_db.total_equity,
-                "peak_equity": last_db.peak_equity,
-                "drawdown_pct": last_db.drawdown_pct,
-                "daily_pnl_usd": last_db.daily_pnl_usd,
-                "daily_pnl_pct": last_db.daily_pnl_pct,
-                "weekly_pnl_usd": last_db.weekly_pnl_usd,
-                "weekly_pnl_pct": last_db.weekly_pnl_pct,
-                "open_positions": last_db.open_positions,
-                "deployed_capital_pct": last_db.deployed_capital_pct,
-                "source": "snapshot",
-                "currency_symbol": "USDT",
-                "dry_run": True,
-            }
-        else:
-            perf = None
+            if bal is not None or pnl is not None:
+                from .routes.performance import _live_to_snapshot
+                perf = _live_to_snapshot(session, bal or {}, pnl, last_db)
+            elif last_db is not None:
+                perf = {
+                    "ts": last_db.ts.isoformat(),
+                    "total_equity": last_db.total_equity,
+                    "peak_equity": last_db.peak_equity,
+                    "drawdown_pct": last_db.drawdown_pct,
+                    "daily_pnl_usd": last_db.daily_pnl_usd,
+                    "daily_pnl_pct": last_db.daily_pnl_pct,
+                    "weekly_pnl_usd": last_db.weekly_pnl_usd,
+                    "weekly_pnl_pct": last_db.weekly_pnl_pct,
+                    "open_positions": last_db.open_positions,
+                    "deployed_capital_pct": last_db.deployed_capital_pct,
+                    "source": "snapshot",
+                    "currency_symbol": "USDT",
+                    "dry_run": True,
+                }
+            else:
+                perf = None
         payload["performance"] = perf
         payload["sentiment_rows"] = sent_count
     except Exception as exc:  # noqa: BLE001

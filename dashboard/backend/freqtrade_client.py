@@ -210,6 +210,38 @@ def live_equity() -> Optional[float]:
         return None
 
 
+def fetch_pnl_breakdown() -> Optional[dict]:
+    """Return {open_pnl, closed_pnl, total_pnl} from Freqtrade. None on failure.
+
+    open_pnl   = sum(profit_abs) over /api/v1/status
+    closed_pnl = /api/v1/profit.profit_closed_coin
+    total_pnl  = open_pnl + closed_pnl  (matches /api/v1/profit.profit_all_coin)
+
+    This is the *trade-by-trade* PnL view — sums exactly what the positions
+    table shows. It differs slightly from balance.total because of how
+    Freqtrade accounts for entry fees and mark-to-market tick alignment.
+    Using this number makes the big-equity display reconcilable with the
+    positions table's PnL column.
+    """
+    status = fetch_status()
+    profit = fetch_profit()
+    if status is None and profit is None:
+        return None
+    try:
+        open_pnl = sum(float(t.get("profit_abs") or 0) for t in (status or []))
+    except (TypeError, ValueError):
+        open_pnl = 0.0
+    try:
+        closed_pnl = float((profit or {}).get("profit_closed_coin", 0) or 0)
+    except (TypeError, ValueError):
+        closed_pnl = 0.0
+    return {
+        "open_pnl": open_pnl,
+        "closed_pnl": closed_pnl,
+        "total_pnl": open_pnl + closed_pnl,
+    }
+
+
 def invalidate_cache() -> None:
     """Tests / manual refresh: drop all cached entries."""
     with _CACHE_LOCK:

@@ -102,6 +102,43 @@ def test_cache_avoids_repeated_calls(monkeypatch):
     assert len(calls) == 1, f"expected 1 call (cached), got {len(calls)}"
 
 
+def test_fetch_pnl_breakdown_sums_open_and_closed(monkeypatch):
+    """open_pnl from /status, closed_pnl from /profit, total_pnl is the sum."""
+    monkeypatch.setenv("FREQTRADE_API_PASSWORD", "secret")
+    # Two endpoints called in sequence — return different payloads based on path
+    def fake_get(url, auth, timeout):
+        if "/status" in url:
+            return _MockResponse(200, [
+                {"profit_abs":  28.72},
+                {"profit_abs":  32.92},
+                {"profit_abs":  -5.17},
+                {"profit_abs":  -2.49},
+            ])
+        if "/profit" in url:
+            return _MockResponse(200, {"profit_closed_coin": 12.50, "closed_trade_count": 3})
+        return _MockResponse(404, None)
+    monkeypatch.setattr(freqtrade_client.requests, "get", fake_get)
+
+    breakdown = freqtrade_client.fetch_pnl_breakdown()
+    assert breakdown is not None
+    # Open: 28.72 + 32.92 - 5.17 - 2.49 = 53.98
+    assert breakdown["open_pnl"] == pytest.approx(53.98)
+    assert breakdown["closed_pnl"] == pytest.approx(12.50)
+    assert breakdown["total_pnl"] == pytest.approx(66.48)
+
+
+def test_fetch_pnl_breakdown_handles_empty_status(monkeypatch):
+    """No open trades, no closed profit → all zeros (still returns a dict)."""
+    monkeypatch.setenv("FREQTRADE_API_PASSWORD", "secret")
+    monkeypatch.setattr(freqtrade_client.requests, "get",
+                        lambda *a, **kw: _MockResponse(200, [] if "/status" in a[0] else {"profit_closed_coin": 0}))
+    b = freqtrade_client.fetch_pnl_breakdown()
+    assert b is not None
+    assert b["open_pnl"] == 0.0
+    assert b["closed_pnl"] == 0.0
+    assert b["total_pnl"] == 0.0
+
+
 def test_fetch_status_returns_list(monkeypatch):
     monkeypatch.setenv("FREQTRADE_API_PASSWORD", "secret")
     monkeypatch.setattr(freqtrade_client.requests, "get",
