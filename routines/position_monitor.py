@@ -35,26 +35,44 @@ log = logging.getLogger(__name__)
 
 ANOMALOUS_MOVE_THRESHOLD = 0.03  # 3% in 5 minutes
 
-# Watermark file storing the highest Freqtrade trade_id we've mirrored to
-# trade_log.md. Prevents duplicate appends across restarts.
-TRADE_LOG_WATERMARK = MEMORY_DIR / ".last_mirrored_trade_id"
+# Set of Freqtrade trade_ids we've already mirrored to trade_log.md.
+# Stored as one int per line in memory/.mirrored_trade_ids.
+#
+# Originally this was a single int "high-water mark" but that breaks for
+# out-of-order closes: Freqtrade assigns trade_id at OPEN time, while trades
+# close in whatever order their stops/ROIs hit. A low-id trade that closes
+# after a high-id trade would be permanently skipped (id > watermark = False).
+# Set membership is robust to any close order.
+MIRRORED_IDS_FILE = MEMORY_DIR / ".mirrored_trade_ids"
+LEGACY_WATERMARK_FILE = MEMORY_DIR / ".last_mirrored_trade_id"
 
 
-def _read_watermark() -> int:
-    if not TRADE_LOG_WATERMARK.exists():
-        return 0
+def _read_mirrored_ids() -> set[int]:
+    if not MIRRORED_IDS_FILE.exists():
+        return set()
     try:
-        return int(TRADE_LOG_WATERMARK.read_text(encoding="utf-8").strip())
-    except (ValueError, OSError):
-        return 0
+        text = MIRRORED_IDS_FILE.read_text(encoding="utf-8")
+    except OSError:
+        return set()
+    out: set[int] = set()
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            out.add(int(line))
+        except ValueError:
+            continue
+    return out
 
 
-def _write_watermark(value: int) -> None:
+def _write_mirrored_ids(ids: set[int]) -> None:
     try:
-        TRADE_LOG_WATERMARK.parent.mkdir(parents=True, exist_ok=True)
-        TRADE_LOG_WATERMARK.write_text(str(value), encoding="utf-8")
+        MIRRORED_IDS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        body = "\n".join(str(i) for i in sorted(ids)) + ("\n" if ids else "")
+        MIRRORED_IDS_FILE.write_text(body, encoding="utf-8")
     except OSError as exc:
-        log.warning("watermark write failed: %s", exc)
+        log.warning("mirrored_ids write failed: %s", exc)
 
 
 def _format_freqtrade_ts(s: str | None) -> str:
@@ -71,28 +89,47 @@ def _format_freqtrade_ts(s: str | None) -> str:
 
 
 def _mirror_closed_trades() -> int:
-    """Append any Freqtrade-closed trades newer than the watermark to trade_log.md.
+    """Append any not-yet-mirrored Freqtrade closed trades to trade_log.md.
 
     Freqtrade owns trade state in its own SQLite; our memory/trade_log.md needs
-    a copy so the bot's narrative log reflects reality. Idempotent via the
-    `.last_mirrored_trade_id` watermark.
+    a copy so the bot's narrative log reflects reality. Idempotent via a set
+    of seen trade_ids in `.mirrored_trade_ids` — robust to out-of-order
+    closes (a low-id trade can close after a high-id trade because trade_id
+    is assigned at open time, not close time).
+
+    Mirrors every closed trade regardless of exit_reason (stop_loss,
+    trailing_stop_loss, roi, force_exit, exit_signal, etc.).
 
     Returns the count of new entries appended.
     """
     from dashboard.backend.freqtrade_client import fetch_closed_trades
 
-    last_seen = _read_watermark()
+    mirrored = _read_mirrored_ids()
     closed = fetch_closed_trades(limit=200)
     if not closed:
         return 0
 
-    new_trades = [t for t in closed if int(t.get("trade_id") or 0) > last_seen]
-    new_trades.sort(key=lambda t: int(t.get("trade_id") or 0))
+    # Filter by id-not-in-set (not by max watermark) so out-of-order closes work.
+    new_trades = []
+    for t in closed:
+        tid = t.get("trade_id")
+        if tid is None:
+            continue
+        try:
+            tid_int = int(tid)
+        except (TypeError, ValueError):
+            continue
+        if tid_int <= 0 or tid_int in mirrored:
+            continue
+        new_trades.append(t)
+
+    # Sort by close_date so the log is chronological even when trade_ids
+    # weren't assigned in close order.
+    new_trades.sort(key=lambda t: t.get("close_date") or "")
     if not new_trades:
         return 0
 
     appended = 0
-    max_id = last_seen
     for t in new_trades:
         pair = t.get("pair") or ""
         coin = pair.split("/", 1)[0] if pair else ""
@@ -115,16 +152,14 @@ def _mirror_closed_trades() -> int:
                 outcome="WIN" if close_profit_abs > 0 else "LOSS",
                 ts=_format_freqtrade_ts(t.get("close_date")),
             )
+            mirrored.add(int(t.get("trade_id")))
             appended += 1
-            tid = int(t.get("trade_id") or 0)
-            if tid > max_id:
-                max_id = tid
         except Exception as exc:  # noqa: BLE001
             log.warning("mirror append failed for trade_id=%s pair=%s: %s",
                         t.get("trade_id"), pair, exc)
 
-    if max_id > last_seen:
-        _write_watermark(max_id)
+    if appended > 0:
+        _write_mirrored_ids(mirrored)
     return appended
 
 
