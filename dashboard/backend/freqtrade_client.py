@@ -81,6 +81,72 @@ def fetch_profit() -> Optional[dict]:
     return _cached_get("/api/v1/profit")
 
 
+def fetch_closed_trades(limit: int = 50) -> Optional[list]:
+    """Return /api/v1/trades — list of closed trades, newest first.
+
+    Freqtrade wraps the array in {"trades": [...], "trades_count": N, ...}.
+    """
+    limit = max(1, min(int(limit), 500))
+    data = _cached_get(f"/api/v1/trades?limit={limit}")
+    if not isinstance(data, dict):
+        return None
+    trades = data.get("trades")
+    return trades if isinstance(trades, list) else []
+
+
+# ---------------------------------------------------------------------------
+# Mapping helpers: Freqtrade trade shape → dashboard shape.
+# Dashboard format matches dashboard.backend.routes.positions._serialize()
+# (the DB-backed Trade row shape) so the frontend doesn't need to change.
+# ---------------------------------------------------------------------------
+def _coin_from_pair(pair: str) -> str:
+    """SOL/USDT:USDT  → 'SOL'."""
+    if not pair:
+        return ""
+    return pair.split("/", 1)[0]
+
+
+def _outcome_for(profit_abs: Optional[float], is_open: bool) -> str:
+    if is_open:
+        return "OPEN"
+    if profit_abs is None:
+        return "OPEN"
+    return "WIN" if float(profit_abs) > 0 else "LOSS"
+
+
+def map_freqtrade_trade(t: dict) -> dict:
+    """Convert one Freqtrade trade payload to the dashboard's trade dict.
+
+    Handles both /status (open) and /trades (closed) shapes. Both formats use
+    the same field names — the only differences are which fields have values.
+    """
+    profit_pct_pct = t.get("profit_pct")          # e.g. -0.03 means -0.03%
+    profit_pct_frac = (float(profit_pct_pct) / 100.0) if profit_pct_pct is not None else None
+    is_open = bool(t.get("is_open", True))
+    is_short = bool(t.get("is_short", False))
+    profit_abs = t.get("profit_abs")
+    if profit_abs is None:
+        profit_abs = t.get("close_profit_abs")
+
+    return {
+        "id":          t.get("trade_id"),
+        "coin":        _coin_from_pair(t.get("pair", "")),
+        "side":        "SHORT" if is_short else "LONG",
+        "entry_price": t.get("open_rate"),
+        "exit_price":  t.get("close_rate"),
+        "quantity":    t.get("amount"),
+        "leverage":    int(t.get("leverage") or 1),
+        "pnl_usd":     float(profit_abs) if profit_abs is not None else None,
+        "pnl_pct":     profit_pct_frac,
+        "entry_ts":    t.get("open_date"),
+        "exit_ts":     t.get("close_date"),
+        "reason_in":   t.get("enter_tag") or "freqtrade",
+        "reason_out":  t.get("exit_reason"),
+        "outcome":     _outcome_for(profit_abs, is_open),
+        "is_paper":    True,   # we run in dry_run; live mode flips this in the route
+    }
+
+
 def live_equity() -> Optional[float]:
     """Return the live equity, or None if Freqtrade unreachable.
 

@@ -159,12 +159,18 @@ class FreqAISentimentStrategy(IStrategy):  # type: ignore[misc,valid-type]
         self, pair: str, current_time: datetime, current_rate: float,
         proposed_leverage: float, max_leverage: float, side: str, **_: Any,
     ) -> float:
-        from risk.position_manager import decide_leverage
+        # Use the Markov-driven leverage rule from signals.three_layer:
+        #   - Sideways or Crash regime → 1x
+        #   - LONG  in Bull/Euphoria with sentiment > +0.3 → 2x
+        #   - SHORT in Bear           with sentiment < -0.3 → 2x
+        #   - else → 1x
+        from signals.three_layer import _choose_leverage
 
         coin = pair.split("/")[0]
         sent, _, _ = _latest_decision(coin)
         regime = _latest_regime(coin)
-        lev = decide_leverage(sent, regime)
+        decision = "SHORT" if str(side).lower() == "short" else "LONG"
+        lev = _choose_leverage(decision, sent, regime)
         return float(min(lev, max_leverage))
 
     # ------------------------------------------------------------------

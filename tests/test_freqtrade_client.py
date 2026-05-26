@@ -109,3 +109,93 @@ def test_fetch_status_returns_list(monkeypatch):
     s = freqtrade_client.fetch_status()
     assert isinstance(s, list)
     assert s[0]["pair"] == "SOL/USDT:USDT"
+
+
+def test_fetch_closed_trades_unwraps_payload(monkeypatch):
+    """Freqtrade returns {"trades": [...]} — the client should return just the list."""
+    monkeypatch.setenv("FREQTRADE_API_PASSWORD", "secret")
+    payload = {"trades": [{"trade_id": 1, "pair": "SOL/USDT:USDT"}], "trades_count": 1}
+    monkeypatch.setattr(freqtrade_client.requests, "get",
+                        lambda *a, **kw: _MockResponse(200, payload))
+    trades = freqtrade_client.fetch_closed_trades(limit=10)
+    assert isinstance(trades, list)
+    assert len(trades) == 1
+    assert trades[0]["trade_id"] == 1
+
+
+def test_map_freqtrade_trade_open_short():
+    raw = {
+        "trade_id": 1,
+        "pair": "SOL/USDT:USDT",
+        "is_short": True,
+        "is_open": True,
+        "amount": 5.84,
+        "open_rate": 85.54,
+        "current_rate": 85.52,
+        "close_rate": None,
+        "profit_pct": -0.03,           # Freqtrade reports as percentage
+        "profit_abs": -0.14,
+        "open_date": "2026-05-26 10:51:53",
+        "close_date": None,
+        "leverage": 1.0,
+        "enter_tag": "",
+        "exit_reason": None,
+    }
+    m = freqtrade_client.map_freqtrade_trade(raw)
+    assert m["id"] == 1
+    assert m["coin"] == "SOL"
+    assert m["side"] == "SHORT"
+    assert m["entry_price"] == 85.54
+    assert m["exit_price"] is None
+    assert m["leverage"] == 1
+    assert m["pnl_usd"] == -0.14
+    # frontend expects a fraction (0.05 == 5%), not Freqtrade's percent number
+    assert m["pnl_pct"] == pytest.approx(-0.03 / 100.0)
+    assert m["outcome"] == "OPEN"
+    assert m["is_paper"] is True
+    assert m["reason_in"] == "freqtrade"
+
+
+def test_map_freqtrade_trade_closed_win_long():
+    raw = {
+        "trade_id": 7,
+        "pair": "INJ/USDT:USDT",
+        "is_short": False,
+        "is_open": False,
+        "amount": 88.2,
+        "open_rate": 5.666,
+        "current_rate": 6.516,
+        "close_rate": 6.516,
+        "profit_pct": 15.00,
+        "profit_abs": 74.97,
+        "open_date": "2026-05-26 10:51:00",
+        "close_date": "2026-05-27 09:30:00",
+        "leverage": 2.0,
+        "enter_tag": "",
+        "exit_reason": "roi",
+    }
+    m = freqtrade_client.map_freqtrade_trade(raw)
+    assert m["side"] == "LONG"
+    assert m["exit_price"] == 6.516
+    assert m["leverage"] == 2
+    assert m["outcome"] == "WIN"
+    assert m["pnl_pct"] == pytest.approx(0.15)
+    assert m["reason_out"] == "roi"
+
+
+def test_map_freqtrade_trade_loss_outcome():
+    raw = {
+        "trade_id": 3,
+        "pair": "ARB/USDT:USDT",
+        "is_short": True,
+        "is_open": False,
+        "amount": 100.0,
+        "open_rate": 1.0, "close_rate": 1.05,
+        "profit_pct": -5.0, "profit_abs": -5.0,
+        "open_date": "x", "close_date": "y",
+        "leverage": 1.0,
+        "exit_reason": "stop_loss",
+    }
+    m = freqtrade_client.map_freqtrade_trade(raw)
+    assert m["outcome"] == "LOSS"
+    assert m["reason_out"] == "stop_loss"
