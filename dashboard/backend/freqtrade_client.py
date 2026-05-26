@@ -22,7 +22,7 @@ import requests
 
 log = logging.getLogger(__name__)
 
-CACHE_TTL_SECONDS = 60.0
+CACHE_TTL_SECONDS = 5.0   # tight enough for ~5s WS pushes; Freqtrade copes fine
 DEFAULT_TIMEOUT = 3.0
 
 _CACHE_LOCK = threading.Lock()
@@ -114,6 +114,26 @@ def _outcome_for(profit_abs: Optional[float], is_open: bool) -> str:
     return "WIN" if float(profit_abs) > 0 else "LOSS"
 
 
+def _take_profit_price(open_rate: Optional[float], is_short: bool,
+                       tp_pct: Optional[float] = None) -> Optional[float]:
+    """Compute the take-profit price from entry + configured ROI.
+
+    Freqtrade's /api/v1/status doesn't expose a take-profit price directly
+    (it uses a time-based ROI table). We approximate from minimal_roi[0]
+    which our config pins to TAKE_PROFIT_PCT (default 15%).
+    """
+    if open_rate is None:
+        return None
+    if tp_pct is None:
+        from config.settings import TAKE_PROFIT_PCT
+        tp_pct = float(TAKE_PROFIT_PCT)
+    try:
+        rate = float(open_rate)
+    except (TypeError, ValueError):
+        return None
+    return rate * (1.0 - tp_pct) if is_short else rate * (1.0 + tp_pct)
+
+
 def map_freqtrade_trade(t: dict) -> dict:
     """Convert one Freqtrade trade payload to the dashboard's trade dict.
 
@@ -128,22 +148,48 @@ def map_freqtrade_trade(t: dict) -> dict:
     if profit_abs is None:
         profit_abs = t.get("close_profit_abs")
 
+    open_rate = t.get("open_rate")
+    current_rate = t.get("current_rate")
+    amount = t.get("amount")
+    # Position size at entry, in stake currency. Prefer Freqtrade's own
+    # `stake_amount` (post-leverage account exposure) when present; fall back
+    # to amount × open_rate.
+    stake = t.get("stake_amount")
+    if stake is None and amount is not None and open_rate is not None:
+        try:
+            stake = float(amount) * float(open_rate)
+        except (TypeError, ValueError):
+            stake = None
+
+    # Current notional value: amount × current_rate.
+    current_value = None
+    if amount is not None and current_rate is not None:
+        try:
+            current_value = float(amount) * float(current_rate)
+        except (TypeError, ValueError):
+            current_value = None
+
     return {
-        "id":          t.get("trade_id"),
-        "coin":        _coin_from_pair(t.get("pair", "")),
-        "side":        "SHORT" if is_short else "LONG",
-        "entry_price": t.get("open_rate"),
-        "exit_price":  t.get("close_rate"),
-        "quantity":    t.get("amount"),
-        "leverage":    int(t.get("leverage") or 1),
-        "pnl_usd":     float(profit_abs) if profit_abs is not None else None,
-        "pnl_pct":     profit_pct_frac,
-        "entry_ts":    t.get("open_date"),
-        "exit_ts":     t.get("close_date"),
-        "reason_in":   t.get("enter_tag") or "freqtrade",
-        "reason_out":  t.get("exit_reason"),
-        "outcome":     _outcome_for(profit_abs, is_open),
-        "is_paper":    True,   # we run in dry_run; live mode flips this in the route
+        "id":               t.get("trade_id"),
+        "coin":             _coin_from_pair(t.get("pair", "")),
+        "side":             "SHORT" if is_short else "LONG",
+        "entry_price":      open_rate,
+        "current_price":    current_rate,
+        "exit_price":       t.get("close_rate"),
+        "quantity":         amount,
+        "size_usdt":        stake,
+        "current_value_usdt": current_value,
+        "leverage":         int(t.get("leverage") or 1),
+        "pnl_usd":          float(profit_abs) if profit_abs is not None else None,
+        "pnl_pct":          profit_pct_frac,
+        "stop_loss_price":  t.get("stop_loss_abs"),
+        "take_profit_price": _take_profit_price(open_rate, is_short),
+        "entry_ts":         t.get("open_date"),
+        "exit_ts":          t.get("close_date"),
+        "reason_in":        t.get("enter_tag") or "freqtrade",
+        "reason_out":       t.get("exit_reason"),
+        "outcome":          _outcome_for(profit_abs, is_open),
+        "is_paper":         True,   # we run in dry_run; live mode flips this in the route
     }
 
 

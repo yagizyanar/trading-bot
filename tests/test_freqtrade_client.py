@@ -133,6 +133,8 @@ def test_map_freqtrade_trade_open_short():
         "open_rate": 85.54,
         "current_rate": 85.52,
         "close_rate": None,
+        "stake_amount": 499.55,
+        "stop_loss_abs": 89.82,
         "profit_pct": -0.03,           # Freqtrade reports as percentage
         "profit_abs": -0.14,
         "open_date": "2026-05-26 10:51:53",
@@ -146,14 +148,48 @@ def test_map_freqtrade_trade_open_short():
     assert m["coin"] == "SOL"
     assert m["side"] == "SHORT"
     assert m["entry_price"] == 85.54
+    assert m["current_price"] == 85.52
     assert m["exit_price"] is None
     assert m["leverage"] == 1
     assert m["pnl_usd"] == -0.14
     # frontend expects a fraction (0.05 == 5%), not Freqtrade's percent number
     assert m["pnl_pct"] == pytest.approx(-0.03 / 100.0)
+    assert m["quantity"] == 5.84
+    assert m["size_usdt"] == pytest.approx(499.55)
+    # current value = amount × current_rate
+    assert m["current_value_usdt"] == pytest.approx(5.84 * 85.52)
+    # SL price comes straight from Freqtrade
+    assert m["stop_loss_price"] == 89.82
+    # TP price computed from open_rate and TAKE_PROFIT_PCT (15% from settings).
+    # SHORT entry at 85.54 → TP at 85.54 * (1 - 0.15) = 72.709
+    assert m["take_profit_price"] == pytest.approx(85.54 * 0.85)
     assert m["outcome"] == "OPEN"
     assert m["is_paper"] is True
     assert m["reason_in"] == "freqtrade"
+
+
+def test_map_freqtrade_trade_tp_price_long_is_higher_than_entry():
+    raw = {
+        "trade_id": 99, "pair": "INJ/USDT:USDT",
+        "is_short": False, "is_open": True,
+        "amount": 88.2, "open_rate": 5.666, "current_rate": 5.70,
+        "leverage": 1.0,
+    }
+    m = freqtrade_client.map_freqtrade_trade(raw)
+    assert m["side"] == "LONG"
+    assert m["take_profit_price"] > m["entry_price"]
+    assert m["take_profit_price"] == pytest.approx(5.666 * 1.15)
+
+
+def test_map_freqtrade_trade_size_usdt_falls_back_when_stake_missing():
+    raw = {
+        "trade_id": 2, "pair": "ARB/USDT:USDT",
+        "is_short": True, "is_open": True,
+        "amount": 100.0, "open_rate": 1.0, "current_rate": 1.0,
+        # no stake_amount
+    }
+    m = freqtrade_client.map_freqtrade_trade(raw)
+    assert m["size_usdt"] == pytest.approx(100.0)   # amount × open_rate fallback
 
 
 def test_map_freqtrade_trade_closed_win_long():

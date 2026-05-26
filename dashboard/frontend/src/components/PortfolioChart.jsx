@@ -2,7 +2,8 @@ import React, { useEffect, useState } from "react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { api } from "../api/client.js";
 
-const REFRESH_MS = 60_000;
+const REFRESH_MS = 60_000;          // 30d history poll — slow chart updates
+const LATEST_FALLBACK_MS = 30_000;  // /latest fallback poll when WS is absent
 
 // Format a number with the right currency convention.
 //   USDT / USDC / other stablecoins → "10,000.00 USDT"  (suffixed, no symbol)
@@ -49,30 +50,48 @@ function SourceBadge({ source, dryRun }) {
   );
 }
 
-export default function PortfolioChart() {
+export default function PortfolioChart({ live }) {
   const [latest, setLatest] = useState(null);
   const [data, setData] = useState([]);
   const [err, setErr] = useState(null);
+  const [haveWsData, setHaveWsData] = useState(false);
+
+  // Prefer WebSocket-pushed performance snapshot (5s cadence). Fall back to
+  // polling /api/performance/latest when the WS hasn't delivered.
+  useEffect(() => {
+    if (live && live.performance) {
+      setLatest(live.performance);
+      setHaveWsData(true);
+    }
+  }, [live]);
 
   useEffect(() => {
     let cancelled = false;
-    const load = async () => {
-      try {
-        const [l, h] = await Promise.all([api.perfLatest(), api.perfHistory(30)]);
+    const loadLatest = () => {
+      if (haveWsData) return;
+      api.perfLatest().then((l) => { if (!cancelled) setLatest(l); }).catch((e) => !cancelled && setErr(e.message));
+    };
+    loadLatest();
+    const id = setInterval(loadLatest, LATEST_FALLBACK_MS);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [haveWsData]);
+
+  // 30-day history — keep a slow poll, this doesn't need live updates
+  useEffect(() => {
+    let cancelled = false;
+    const loadHistory = () => {
+      api.perfHistory(30).then((h) => {
         if (cancelled) return;
-        setLatest(l);
         setData(h.map((r) => ({
           ts: new Date(r.ts).toLocaleDateString(),
           equity: r.total_equity,
           peak: r.peak_equity,
         })));
         setErr(null);
-      } catch (e) {
-        if (!cancelled) setErr(e.message);
-      }
+      }).catch((e) => !cancelled && setErr(e.message));
     };
-    load();
-    const id = setInterval(load, REFRESH_MS);
+    loadHistory();
+    const id = setInterval(loadHistory, REFRESH_MS);
     return () => { cancelled = true; clearInterval(id); };
   }, []);
 
@@ -109,7 +128,7 @@ export default function PortfolioChart() {
           </div>
         </div>
         <div className="text-xs text-slate-500 text-right">
-          30d history · 60s refresh
+          {haveWsData ? "live · 5s" : "polling"} · 30d history
           {err && <div className="text-rose-400 mt-1">err: {err}</div>}
         </div>
       </div>

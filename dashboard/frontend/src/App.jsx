@@ -40,7 +40,7 @@ export default function App() {
       </section>
 
       <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <PortfolioChart />
+        <PortfolioChart live={live} />
         <RegimeDisplay />
       </section>
 
@@ -57,9 +57,9 @@ export default function App() {
         <HyperliquidSentiment />
       </section>
 
-      <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <PositionsTable kind="open"   title="Open positions" />
-        <PositionsTable kind="closed" title="Closed positions" />
+      <section className="grid grid-cols-1 gap-4">
+        <PositionsTable kind="open"   title="Open positions"   live={live} />
+        <PositionsTable kind="closed" title="Closed positions" live={live} />
       </section>
 
       <section>
