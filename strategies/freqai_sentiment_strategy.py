@@ -130,35 +130,22 @@ class FreqAISentimentStrategy(IStrategy):  # type: ignore[misc,valid-type]
     # Entry / Exit
     # ------------------------------------------------------------------
     def populate_entry_trend(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
-        long_ok = (
-            (dataframe["routine_decision"] == "LONG")
-            & (dataframe["markov_signal"] > 0.2)
-            & (dataframe["unified_sentiment"] > 0.2)
-            & (dataframe["tech_label"] == "BULL")
-        )
-        short_ok = (
-            (dataframe["routine_decision"] == "SHORT")
-            & (dataframe["markov_signal"] < -0.2)
-            & (dataframe["unified_sentiment"] < -0.2)
-            & (dataframe["tech_label"] == "BEAR")
-        )
-        dataframe.loc[long_ok, "enter_long"] = 1
-        dataframe.loc[short_ok, "enter_short"] = 1
+        # Trust `routine_decision` directly — the market_evaluation routine has
+        # already applied the Markov-primary gate, sentiment/technical multipliers,
+        # regime checks, correlation caps, and circuit breakers. Re-gating here
+        # would duplicate (and historically conflicted with) that logic.
+        #
+        # Stop-loss (-5%) and take-profit (+15%) are still enforced by Freqtrade.
+        dataframe.loc[dataframe["routine_decision"] == "LONG",  "enter_long"]  = 1
+        dataframe.loc[dataframe["routine_decision"] == "SHORT", "enter_short"] = 1
         return dataframe
 
     def populate_exit_trend(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
-        exit_long = (
-            (dataframe["markov_signal"] < -0.1)
-            | (dataframe["unified_sentiment"] < -0.3)
-            | (dataframe["routine_decision"] == "SHORT")
-        )
-        exit_short = (
-            (dataframe["markov_signal"] > 0.1)
-            | (dataframe["unified_sentiment"] > 0.3)
-            | (dataframe["routine_decision"] == "LONG")
-        )
-        dataframe.loc[exit_long, "exit_long"] = 1
-        dataframe.loc[exit_short, "exit_short"] = 1
+        # Exit only on a *strong opposite* routine decision — a SKIP isn't a
+        # reason to close (it often just means correlation rules blocked a new
+        # entry, not that the existing position is wrong).
+        dataframe.loc[dataframe["routine_decision"] == "SHORT", "exit_long"]  = 1
+        dataframe.loc[dataframe["routine_decision"] == "LONG",  "exit_short"] = 1
         return dataframe
 
     # ------------------------------------------------------------------
