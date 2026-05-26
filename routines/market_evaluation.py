@@ -148,6 +148,24 @@ class MarketEvaluationRoutine(BaseRoutine):
 
 
 def _currently_open_coins() -> list[str]:
+    """Return base symbols of currently open positions.
+
+    Prefers Freqtrade's live `/api/v1/status` (the executor's ground truth),
+    falls back to our `trades` DB table if Freqtrade is unreachable.
+
+    The DB table is empty in normal operation because Freqtrade stores its
+    trades in its own SQLite — reading from there gave us spurious correlation
+    blocks (e.g., OP getting marked as "Already 2 open in sector L2" when only
+    ARB was actually open and MATIC was a wished-for-but-undeliverable signal).
+    """
+    try:
+        from dashboard.backend.freqtrade_client import fetch_status
+        live = fetch_status()
+        if live is not None:
+            return [t.get("pair", "").split("/")[0] for t in live if t.get("pair")]
+    except Exception as exc:  # noqa: BLE001
+        log.warning("freqtrade fetch_status failed in market_evaluation: %s", exc)
+
     try:
         from database import SessionLocal, Trade
         with SessionLocal() as session:

@@ -53,14 +53,17 @@ _COIN_ALIASES: dict[str, tuple[str, ...]] = {
     "AVAX": ("AVAX", "Avalanche"),
     "LINK": ("LINK", "Chainlink"),
     "DOT": ("DOT", "Polkadot"),
-    "MATIC": ("MATIC", "Polygon"),
+    "POL": ("POL", "Polygon"),                # renamed from MATIC in 2024
     "INJ": ("INJ", "Injective"),
     "ARB": ("ARB", "Arbitrum"),
     "OP": ("OP", "Optimism"),
     "APT": ("APT", "Aptos"),
     "SUI": ("SUI", "Sui"),
     "NEAR": ("NEAR", "Near Protocol"),
-    "FTM": ("FTM", "Fantom"),
+    # S = Sonic (renamed from FTM/Fantom). Intentionally omitting bare "S"
+    # alias — a single-letter token would match in nearly any news headline
+    # and produce false-positive mentions.
+    "S": ("Sonic", "Sonic Labs"),
     "ATOM": ("ATOM", "Cosmos"),
     "SAND": ("SAND", "Sandbox"),
     "MANA": ("MANA", "Decentraland"),

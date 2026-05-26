@@ -22,8 +22,16 @@ def test_fear_greed_multiplier_tiers():
 
 def test_detect_coins_aliases():
     assert "SOL" in _detect_coins("Solana ETF approved")
-    assert "MATIC" in _detect_coins("Polygon zk-EVM upgrade")
+    assert "POL" in _detect_coins("Polygon zk-EVM upgrade")
+    assert "S" in _detect_coins("Sonic mainnet launches today")
     assert _detect_coins("Just random text") == ()
+
+
+def test_sonic_bare_letter_does_not_false_match():
+    """`S` alias is omitted on purpose — single-letter would match anywhere.
+    Headlines like 'BTC and ETH rally' must NOT yield an 'S' detection."""
+    assert "S" not in _detect_coins("Bitcoin and Ethereum rally as ETFs roll out")
+    assert "S" not in _detect_coins("S&P 500 hits new highs")  # only "Sonic" / "Sonic Labs" should match
 
 
 def test_score_headlines_aggregates_per_coin():

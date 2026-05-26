@@ -47,16 +47,19 @@ LOGS_DIR: Final[Path] = PROJECT_ROOT / "logs"
 LOGS_DIR.mkdir(exist_ok=True)
 
 TARGET_COINS: Final[tuple[str, ...]] = (
-    "SOL", "AVAX", "LINK", "DOT", "MATIC", "INJ", "ARB", "OP", "APT", "SUI",
-    "NEAR", "FTM", "ATOM", "SAND", "MANA", "AXS", "DYDX", "GMX",
+    # MATIC → POL (Polygon rebrand, 2024) and FTM → S (Sonic rebrand, 2024/25).
+    # Binance Futures discontinued the old tickers; the new symbols below are
+    # the active perpetual pairs.
+    "SOL", "AVAX", "LINK", "DOT", "POL", "INJ", "ARB", "OP", "APT", "SUI",
+    "NEAR", "S", "ATOM", "SAND", "MANA", "AXS", "DYDX", "GMX",
 )
 QUOTE: Final[str] = "USDT"
 PAIRS: Final[tuple[str, ...]] = tuple(f"{c}/{QUOTE}" for c in TARGET_COINS)
 
 SECTOR_MAP: Final[dict[str, str]] = {
-    "MATIC": "L2", "ARB": "L2", "OP": "L2",
+    "POL": "L2", "ARB": "L2", "OP": "L2",
     "SOL": "L1", "AVAX": "L1", "DOT": "L1", "APT": "L1", "SUI": "L1",
-    "NEAR": "L1", "FTM": "L1", "ATOM": "L1",
+    "NEAR": "L1", "S": "L1", "ATOM": "L1",
     "LINK": "ORACLE",
     "INJ": "DEFI", "DYDX": "DEFI", "GMX": "DEFI",
     "SAND": "GAMING", "MANA": "GAMING", "AXS": "GAMING",
