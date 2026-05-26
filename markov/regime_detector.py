@@ -28,7 +28,10 @@ from sentiment.binance_data import fetch_binance_ohlcv
 
 log = logging.getLogger(__name__)
 
-# Skill path. We import from there so we never duplicate the model code.
+# Prefer the external Claude Code skill when present (it's the canonical source),
+# fall back to our vendored copy otherwise. Both implementations are identical
+# pure-NumPy/Pandas code; the fallback exists so the bot is portable to hosts
+# that don't have the skill installed (e.g. the VPS).
 _SKILL_DIR = Path.home() / ".claude" / "skills" / "markov-hedge-fund-method"
 if _SKILL_DIR.exists():
     sys.path.insert(0, str(_SKILL_DIR))
@@ -41,13 +44,17 @@ try:
         signal_from_matrix,
         stationary_distribution,
     )
-except ImportError as exc:
-    log.warning("markov-hedge-fund-method skill import failed (%s) — degraded mode", exc)
-    STATES = ["Bear", "Sideways", "Bull"]
-    build_transition_matrix = None  # type: ignore
-    label_regimes = None  # type: ignore
-    signal_from_matrix = None  # type: ignore
-    stationary_distribution = None  # type: ignore
+    _MARKOV_SOURCE = "external_skill"
+except ImportError:
+    from ._skill_fallback import (
+        STATES,
+        build_transition_matrix,
+        label_regimes,
+        signal_from_matrix,
+        stationary_distribution,
+    )
+    _MARKOV_SOURCE = "vendored_fallback"
+    log.info("markov-hedge-fund-method skill not available; using vendored fallback")
 
 
 @dataclass(frozen=True)
@@ -108,8 +115,8 @@ def _base_label_name(state_idx: int) -> str:
 def detect_regime(close: pd.Series, coin: str) -> RegimeResult:
     """Compute regime + Markov signal from a Close-price series."""
     now = datetime.now(timezone.utc)
-    if label_regimes is None or build_transition_matrix is None:
-        return RegimeResult(**{**_DEFAULT_DEGRADED.__dict__, "coin": coin, "timestamp": now})
+    # label_regimes / build_transition_matrix are always non-None now
+    # (we fall back to the vendored copy at import time).
 
     if close is None or len(close) < MARKOV_MIN_TRAIN + 30:
         return RegimeResult(
