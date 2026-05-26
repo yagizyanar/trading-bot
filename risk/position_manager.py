@@ -20,13 +20,19 @@ CORRELATED_SECTOR_LIMIT = 3
 
 
 def pct_capital_for_signal(signal_strength: float) -> float:
-    """Map |signal| to % of capital. Below 0.2 returns 0.0 (skip)."""
+    """Map |signal| to % of capital. Below 0.1 returns 0.0 (skip).
+
+    Tiers (Video 4 "Option A" — pure Markov sizing):
+      |s| > 0.5  → 5% (full)
+      |s| > 0.3  → 3% (medium)
+      |s| > 0.1  → 1% (small)  ← was 0.2; relaxed so the bot actually trades
+    """
     s = abs(signal_strength)
     if s > 0.5:
         return SIGNAL_FULL_PCT
     if s > 0.3:
         return SIGNAL_MEDIUM_PCT
-    if s > 0.2:
+    if s > 0.1:
         return SIGNAL_SMALL_PCT
     return 0.0
 

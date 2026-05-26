@@ -1,33 +1,78 @@
-"""Three-layer signal evaluation.
+"""Markov-driven signal evaluation (Video 4 "Option A" hedge fund method).
 
-Layer 1 → Markov regime (Bull/Bear/Sideways/Crash/Euphoria) + Markov signal
-Layer 2 → Unified sentiment score (-1.0 .. +1.0)
-Layer 3 → Technical label (BULL/BEAR/NEUTRAL)
+REPLACES the original 3-layer all-or-nothing gate. The old rule SKIPped a
+trade if any of {Markov, sentiment, technical} didn't strictly agree —
+which in practice meant the bot never opened a trade. New logic:
 
-A LONG decision requires:
-  - markov_signal > +0.2
-  - regime in {Bull, Sideways/Neutral} AND regime != Crash
-  - sentiment > +0.2
-  - technical == BULL
+1. **Markov is the sole gate and the base sizer.** Direction + base position
+   size come from `markov_signal = P(Bull|s) − P(Bear|s)`:
 
-A SHORT decision requires the mirrored conditions.
+       |signal| > 0.5  →  5% of capital (full)
+       |signal| > 0.3  →  3% of capital (medium)
+       |signal| > 0.1  →  1% of capital (small)
+       |signal| ≤ 0.1  →  no trade
 
-Anything else → SKIP.
+2. **Sentiment is a multiplier**, not a gate. Aligned with trade direction
+   (positive for LONG, negative for SHORT):
+
+       aligned > +0.2   →  ×1.00  (keep)
+       aligned 0..+0.2  →  ×0.75  (reduce 25%)
+       aligned -0.2..0  →  ×0.50  (reduce 50%)
+       aligned ≤ -0.2   →  ×0.25  (reduce 75%)
+
+3. **Technical is a soft confirmation**, not a gate. Contradiction
+   (BULL tech on a SHORT trade or vice versa) shaves another 25% off.
+
+4. **Sideways regime**: trades still fire, but position size is halved
+   and leverage is forced to 1x.
+
+5. **Crash regime**: hard SKIP — no new positions, regardless of signal.
+
+6. **Confidence is informational only.** The Markov matrix is allowed to
+   trade even with low confidence; the dashboard shows the number for
+   the user but the gate does not consult it.
+
+Circuit breakers are still enforced upstream — `cb_allows_new=False` SKIPs
+everything, and the `cb_multiplier` scales the final position size last.
+
+Stop-loss (-5%) and take-profit (+15%) are unchanged.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Optional
 
-from config.settings import (
-    SENTIMENT_BEAR_THRESHOLD,
-    SENTIMENT_BULL_THRESHOLD,
-)
 from markov.regime_detector import RegimeResult
 from sentiment.analyzer import UnifiedScore
 
-from .position_sizing import size_for_signal
 from .technical import TechnicalSnapshot
+
+
+# Markov-signal → base position size (fraction of capital). Strictly greater-than.
+MARKOV_FULL    = 0.5
+MARKOV_MEDIUM  = 0.3
+MARKOV_SMALL   = 0.1   # was 0.2 — relaxed per Video 4
+
+BASE_FULL_PCT   = 0.05
+BASE_MEDIUM_PCT = 0.03
+BASE_SMALL_PCT  = 0.01
+
+# Sentiment alignment thresholds for position-size adjustment.
+SENT_ALIGNED_STRONG = 0.2    # > +0.2 → keep
+# 0 to +0.2 → reduce 25%
+# -0.2 to 0 → reduce 50%
+# < -0.2 → reduce 75%
+
+SENT_MULT_FULL    = 1.00
+SENT_MULT_25_OFF  = 0.75
+SENT_MULT_50_OFF  = 0.50
+SENT_MULT_75_OFF  = 0.25
+
+TECH_MULT_CONTRADICTS = 0.75
+SIDEWAYS_SIZE_MULT    = 0.5
+
+ALLOWED_LONG_REGIMES  = ("Bull", "Sideways", "Euphoria")
+ALLOWED_SHORT_REGIMES = ("Bear", "Sideways")
 
 
 @dataclass(frozen=True)
@@ -45,12 +90,53 @@ class SignalDecision:
     skip_reason: Optional[str] = None
 
 
-def _allowed_long_regime(regime: str) -> bool:
-    return regime in ("Bull", "Sideways", "Euphoria")
+def _base_size_from_markov(markov_signal: float) -> tuple[str, float]:
+    """Return (decision, base_pct) from the Markov signal alone.
+
+    decision is "LONG" / "SHORT" / "SKIP". For SKIP the base_pct is 0.
+    """
+    m = markov_signal
+    if m > MARKOV_FULL:    return "LONG",  BASE_FULL_PCT
+    if m > MARKOV_MEDIUM:  return "LONG",  BASE_MEDIUM_PCT
+    if m > MARKOV_SMALL:   return "LONG",  BASE_SMALL_PCT
+    if m < -MARKOV_FULL:   return "SHORT", BASE_FULL_PCT
+    if m < -MARKOV_MEDIUM: return "SHORT", BASE_MEDIUM_PCT
+    if m < -MARKOV_SMALL:  return "SHORT", BASE_SMALL_PCT
+    return "SKIP", 0.0
 
 
-def _allowed_short_regime(regime: str) -> bool:
-    return regime in ("Bear", "Sideways")
+def _sentiment_multiplier(sentiment: float, decision: str) -> float:
+    """Aligned sentiment → size multiplier. For SHORT we invert."""
+    aligned = sentiment if decision == "LONG" else -sentiment
+    if aligned >  SENT_ALIGNED_STRONG: return SENT_MULT_FULL
+    if aligned >  0.0:                 return SENT_MULT_25_OFF
+    if aligned > -SENT_ALIGNED_STRONG: return SENT_MULT_50_OFF
+    return SENT_MULT_75_OFF
+
+
+def _technical_multiplier(tech_label: str, decision: str) -> float:
+    """BULL tech on SHORT (or BEAR on LONG) shaves 25% off; otherwise no-op."""
+    if decision == "LONG"  and tech_label == "BEAR": return TECH_MULT_CONTRADICTS
+    if decision == "SHORT" and tech_label == "BULL": return TECH_MULT_CONTRADICTS
+    return 1.0
+
+
+def _regime_size_multiplier(regime: str) -> float:
+    """Sideways → half. Crash is handled separately (hard SKIP)."""
+    return SIDEWAYS_SIZE_MULT if regime == "Sideways" else 1.0
+
+
+def _choose_leverage(decision: str, sentiment: float, regime: str) -> int:
+    """1x in Sideways; otherwise 2x only when sentiment strongly favours the trade."""
+    if regime == "Sideways":
+        return 1
+    if regime == "Crash":
+        return 1
+    if decision == "LONG"  and sentiment >  0.3 and regime in ("Bull", "Euphoria"):
+        return 2
+    if decision == "SHORT" and sentiment < -0.3 and regime == "Bear":
+        return 2
+    return 1
 
 
 def evaluate_signal(
@@ -61,88 +147,86 @@ def evaluate_signal(
     capital: float,
     cb_multiplier: float,
     cb_allows_new: bool,
-    leverage_chooser=None,
+    leverage_chooser=None,  # kept for backwards-compat with existing callers
 ) -> SignalDecision:
-    """Return a SignalDecision. Defaults to SKIP unless all 3 layers agree."""
-    from risk.position_manager import decide_leverage
+    """Compute the trading decision for one coin.
 
-    leverage_chooser = leverage_chooser or decide_leverage
+    Markov decides direction + base size. Sentiment and technical adjust size.
+    Sideways halves. Crash hard-skips. Circuit breakers scale everything last.
+    """
+    ms = regime_result.markov_signal
+    sent = sentiment.unified
+    tech = technical.label
 
     if not cb_allows_new:
         return SignalDecision(
-            coin=coin,
-            decision="SKIP",
-            position_size_pct=0.0,
-            dollars=0.0,
-            leverage=1,
-            markov_signal=regime_result.markov_signal,
-            sentiment_score=sentiment.unified,
-            technical_label=technical.label,
-            regime=regime_result.regime,
+            coin=coin, decision="SKIP",
+            position_size_pct=0.0, dollars=0.0, leverage=1,
+            markov_signal=ms, sentiment_score=sent,
+            technical_label=tech, regime=regime_result.regime,
             reason="circuit breaker disallows new positions",
             skip_reason="circuit breaker disallows new positions",
         )
 
     if regime_result.regime == "Crash":
         return SignalDecision(
-            coin=coin, decision="SKIP", position_size_pct=0.0, dollars=0.0,
-            leverage=1, markov_signal=regime_result.markov_signal,
-            sentiment_score=sentiment.unified, technical_label=technical.label,
-            regime=regime_result.regime, reason="Crash regime — no new positions",
+            coin=coin, decision="SKIP",
+            position_size_pct=0.0, dollars=0.0, leverage=1,
+            markov_signal=ms, sentiment_score=sent,
+            technical_label=tech, regime=regime_result.regime,
+            reason="Crash regime — no new positions",
             skip_reason="Crash regime",
         )
 
-    ms = regime_result.markov_signal
-    sent = sentiment.unified
-    tech = technical.label
-
-    long_ok = (
-        ms > 0.2
-        and _allowed_long_regime(regime_result.regime)
-        and sent > SENTIMENT_BULL_THRESHOLD
-        and tech == "BULL"
-    )
-    short_ok = (
-        ms < -0.2
-        and _allowed_short_regime(regime_result.regime)
-        and sent < SENTIMENT_BEAR_THRESHOLD
-        and tech == "BEAR"
-    )
-
-    if long_ok:
-        dollars, pct = size_for_signal(ms, capital, cb_multiplier)
-        lev = leverage_chooser(sent, regime_result.regime)
+    decision, base_pct = _base_size_from_markov(ms)
+    if decision == "SKIP":
         return SignalDecision(
-            coin=coin, decision="LONG", position_size_pct=pct, dollars=dollars,
-            leverage=lev, markov_signal=ms, sentiment_score=sent,
+            coin=coin, decision="SKIP",
+            position_size_pct=0.0, dollars=0.0, leverage=1,
+            markov_signal=ms, sentiment_score=sent,
             technical_label=tech, regime=regime_result.regime,
-            reason=f"markov={ms:+.2f}, sent={sent:+.2f}, tech={tech}, regime={regime_result.regime}",
+            reason=f"|markov|={abs(ms):.2f} <= {MARKOV_SMALL} (dead zone)",
+            skip_reason=f"markov in dead zone",
         )
 
-    if short_ok:
-        dollars, pct = size_for_signal(ms, capital, cb_multiplier)
-        # Shorts default to 1x leverage regardless of sentiment magnitude
+    if decision == "LONG"  and regime_result.regime not in ALLOWED_LONG_REGIMES:
         return SignalDecision(
-            coin=coin, decision="SHORT", position_size_pct=pct, dollars=dollars,
-            leverage=1, markov_signal=ms, sentiment_score=sent,
+            coin=coin, decision="SKIP",
+            position_size_pct=0.0, dollars=0.0, leverage=1,
+            markov_signal=ms, sentiment_score=sent,
             technical_label=tech, regime=regime_result.regime,
-            reason=f"markov={ms:+.2f}, sent={sent:+.2f}, tech={tech}, regime={regime_result.regime}",
+            reason=f"LONG not allowed in {regime_result.regime} regime",
+            skip_reason=f"LONG vs {regime_result.regime}",
+        )
+    if decision == "SHORT" and regime_result.regime not in ALLOWED_SHORT_REGIMES:
+        return SignalDecision(
+            coin=coin, decision="SKIP",
+            position_size_pct=0.0, dollars=0.0, leverage=1,
+            markov_signal=ms, sentiment_score=sent,
+            technical_label=tech, regime=regime_result.regime,
+            reason=f"SHORT not allowed in {regime_result.regime} regime",
+            skip_reason=f"SHORT vs {regime_result.regime}",
         )
 
-    fails: list[str] = []
-    if abs(ms) <= 0.2:
-        fails.append(f"|markov|={abs(ms):.2f}<=0.2")
-    if abs(sent) <= 0.2:
-        fails.append(f"|sent|={abs(sent):.2f}<=0.2")
-    if tech == "NEUTRAL":
-        fails.append("technical=NEUTRAL")
-    if not (long_ok or short_ok) and not fails:
-        fails.append("layers disagree on direction")
+    sent_mult   = _sentiment_multiplier(sent, decision)
+    tech_mult   = _technical_multiplier(tech, decision)
+    regime_mult = _regime_size_multiplier(regime_result.regime)
 
+    final_pct = base_pct * sent_mult * tech_mult * regime_mult * cb_multiplier
+    dollars   = capital * final_pct
+    lev       = _choose_leverage(decision, sent, regime_result.regime)
+
+    reason = (
+        f"markov={ms:+.2f} ({decision} base {base_pct:.0%}) "
+        f"× sent={sent_mult:.2f} × tech={tech_mult:.2f} "
+        f"× regime={regime_mult:.2f} × cb={cb_multiplier:.2f} "
+        f"→ {final_pct:.2%} lev={lev}x"
+    )
     return SignalDecision(
-        coin=coin, decision="SKIP", position_size_pct=0.0, dollars=0.0,
-        leverage=1, markov_signal=ms, sentiment_score=sent,
+        coin=coin, decision=decision,
+        position_size_pct=final_pct, dollars=dollars,
+        leverage=lev,
+        markov_signal=ms, sentiment_score=sent,
         technical_label=tech, regime=regime_result.regime,
-        reason=f"3-layer gate not satisfied: {', '.join(fails)}",
-        skip_reason=", ".join(fails),
+        reason=reason,
     )

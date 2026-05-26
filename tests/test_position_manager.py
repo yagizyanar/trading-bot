@@ -10,12 +10,16 @@ from risk.position_manager import (
 
 
 def test_pct_capital_tiers():
+    # Tiers (Video 4 "Option A" — small threshold relaxed from 0.2 to 0.1):
+    #   |s| > 0.5 → 5%,  > 0.3 → 3%,  > 0.1 → 1%,  ≤ 0.1 → 0
     assert pct_capital_for_signal(0.6) == 0.05
     assert pct_capital_for_signal(0.4) == 0.03
-    assert pct_capital_for_signal(0.25) == 0.01
-    assert pct_capital_for_signal(0.1) == 0.0
+    assert pct_capital_for_signal(0.15) == 0.01   # was 0.25 in old tier
+    assert pct_capital_for_signal(0.10) == 0.0    # boundary — strictly greater
+    assert pct_capital_for_signal(0.05) == 0.0
     # symmetric on shorts
     assert pct_capital_for_signal(-0.6) == 0.05
+    assert pct_capital_for_signal(-0.15) == 0.01
 
 
 def test_decide_leverage_requires_both_conditions():
