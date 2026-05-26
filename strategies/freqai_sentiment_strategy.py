@@ -114,7 +114,11 @@ class FreqAISentimentStrategy(IStrategy):  # type: ignore[misc,valid-type]
         dataframe["markov_signal"] = regime_signal
         dataframe["routine_decision"] = decision  # LONG / SHORT / SKIP
 
-        if self.freqai is not None:  # type: ignore[attr-defined]
+        # Only invoke FreqAI when config.freqai.enabled is True. `self.freqai`
+        # is a non-None stub object even when freqai is disabled — its `start()`
+        # raises OperationalException, which used to silently kill every
+        # candle's analysis. Check the config flag instead.
+        if self.config.get("freqai", {}).get("enabled", False):  # type: ignore[attr-defined]
             dataframe = self.freqai.start(dataframe, metadata, self)  # type: ignore[attr-defined]
 
         # Compose technical label from latest row
