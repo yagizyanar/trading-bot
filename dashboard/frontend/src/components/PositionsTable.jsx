@@ -145,6 +145,7 @@ function ClosedTable({ rows }) {
           <th className="text-left py-1 px-2">Side</th>
           <th className="text-right py-1 px-2">Entry</th>
           <th className="text-right py-1 px-2">Exit</th>
+          <th className="text-right py-1 px-2">Size (USDT)</th>
           <th className="text-right py-1 px-2">P&amp;L %</th>
           <th className="text-left py-1 px-2">Outcome</th>
           <th className="text-left py-1 px-2">Reason</th>
@@ -157,6 +158,7 @@ function ClosedTable({ rows }) {
             <td className={`py-1 px-2 ${sideClass(r.side)}`}>{r.side}</td>
             <td className="py-1 px-2 text-right font-mono">{fmtPrice(r.entry_price)}</td>
             <td className="py-1 px-2 text-right font-mono">{fmtPrice(r.exit_price)}</td>
+            <td className="py-1 px-2 text-right font-mono">{fmtMoney(r.size_usdt)}</td>
             <td className={`py-1 px-2 text-right font-mono ${pnlClass(r.pnl_pct)}`}>
               {r.pnl_pct != null ? `${(r.pnl_pct * 100).toFixed(2)}%` : "—"}
             </td>
@@ -165,7 +167,7 @@ function ClosedTable({ rows }) {
           </tr>
         ))}
         {rows.length === 0 && (
-          <tr><td colSpan="7" className="py-3 px-2 text-slate-500 italic">no closed positions</td></tr>
+          <tr><td colSpan="8" className="py-3 px-2 text-slate-500 italic">no closed positions</td></tr>
         )}
       </tbody>
     </table>
