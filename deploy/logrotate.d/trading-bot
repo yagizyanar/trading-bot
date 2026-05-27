@@ -1,0 +1,32 @@
+/var/log/trading-bot/freqtrade.log {
+    # Rotate when the file exceeds 50 MB. The daily logrotate cron at
+    # /etc/cron.daily/logrotate is what checks this, so worst-case the
+    # file can grow a bit past 50 MB between checks.
+    size 50M
+
+    # Keep all rotated files forever (~27 years before this wraps).
+    # User preference: never delete, just compress.
+    rotate 9999
+
+    # Gzip rotated files. `delaycompress` keeps the most recently rotated
+    # file uncompressed so `tail -f` still works for one cycle.
+    compress
+    delaycompress
+
+    # Don't fail if the log isn't there (fresh deploy, etc.).
+    missingok
+
+    # Don't rotate an empty log.
+    notifempty
+
+    # Freqtrade keeps the log file open. Without copytruncate, after
+    # rotation Freqtrade would keep writing to the renamed (rotated)
+    # file. copytruncate copies content to the archive then truncates
+    # the original, so Freqtrade's open file handle keeps writing to
+    # the now-empty original.
+    copytruncate
+
+    # Date-suffix the rotated files: freqtrade.log-2026-05-27.gz
+    dateext
+    dateformat -%Y-%m-%d
+}

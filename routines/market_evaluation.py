@@ -119,6 +119,12 @@ class MarketEvaluationRoutine(BaseRoutine):
             regime_mode = "unknown"
             confidence_avg = 0.0
 
+        # Real deployed capital from live Freqtrade state — NOT the sum of
+        # new-signal sizes from this cycle (which is misleading: most signals
+        # SKIP, so it would always read 0-15% on the dashboard even when 40%+
+        # of the wallet is actually deployed across pre-existing positions).
+        actual_deployed_pct = _actual_deployed_pct(portfolio["equity"])
+
         overwrite_market_context(
             regime=regime_mode,
             regime_confidence=confidence_avg,
@@ -129,7 +135,7 @@ class MarketEvaluationRoutine(BaseRoutine):
             ),
             active_positions=len(open_coins),
             portfolio_value=portfolio["equity"],
-            deployed_pct=deployed_pct,
+            deployed_pct=actual_deployed_pct,
             daily_pnl_usd=portfolio["equity"] * portfolio["daily_pnl_pct"],
             daily_pnl_pct=portfolio["daily_pnl_pct"],
             weekly_pnl_usd=portfolio["equity"] * portfolio["weekly_pnl_pct"],
@@ -145,6 +151,28 @@ class MarketEvaluationRoutine(BaseRoutine):
             "average_markov_signal": avg_regime_signal,
             "regime_mode": regime_mode,
         }
+
+
+def _actual_deployed_pct(equity: float) -> float:
+    """Real deployed capital from Freqtrade's open positions, as a fraction of equity.
+
+    Falls back to 0.0 if Freqtrade is unreachable. Used by market_context.md so
+    the "deployed %" dashboard line matches what the positions table actually
+    sums to, not the per-cycle new-signal sum (which would always be small
+    because most signals SKIP).
+    """
+    if equity is None or equity <= 0:
+        return 0.0
+    try:
+        from dashboard.backend.freqtrade_client import fetch_status
+        live = fetch_status()
+        if not live:
+            return 0.0
+        total_stake = sum(float(t.get("stake_amount") or 0) for t in live)
+        return total_stake / float(equity)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("actual_deployed_pct: freqtrade lookup failed: %s", exc)
+        return 0.0
 
 
 def _currently_open_coins() -> list[str]:
