@@ -22,6 +22,7 @@ export const api = {
   funding:          () => get("/market/funding"),
   hyperliquid:      () => get("/market/hyperliquid"),
   marketSummary:    () => get("/market/summary"),
+  alerts:           () => get("/alerts/"),
 };
 
 export function openWebsocket(onMessage) {

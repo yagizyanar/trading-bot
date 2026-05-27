@@ -21,6 +21,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from database import PerformanceSnapshot, SentimentScore, SessionLocal
 from risk.lockfile import is_locked
 
+from .alerts import get_alerts
 from .freqtrade_client import (
     fetch_balance,
     fetch_pnl_breakdown,
@@ -102,6 +103,13 @@ async def _snapshot() -> dict:
     payload["open_positions"] = len(pos) if isinstance(pos, list) else 0
     if isinstance(perf, dict):
         perf["open_positions"] = payload["open_positions"]
+
+    # System alerts (server-side 5-min cache, so cheap to read every push)
+    try:
+        payload["alerts"] = get_alerts()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("ws alerts fetch failed: %s", exc)
+        payload["alerts"] = []
 
     return payload
 

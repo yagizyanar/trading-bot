@@ -11,6 +11,7 @@ import MemoryViewer from "./components/MemoryViewer.jsx";
 import LongShortGrid from "./components/LongShortGrid.jsx";
 import FundingRateGrid from "./components/FundingRateGrid.jsx";
 import HyperliquidSentiment from "./components/HyperliquidSentiment.jsx";
+import SystemAlerts from "./components/SystemAlerts.jsx";
 import { openWebsocket } from "./api/client.js";
 
 export default function App() {
@@ -31,6 +32,10 @@ export default function App() {
           {live?.ts ? `live tick: ${new Date(live.ts).toLocaleTimeString()}` : "connecting..."}
         </span>
       </header>
+
+      <section>
+        <SystemAlerts live={live} />
+      </section>
 
       <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <BotStatus />
