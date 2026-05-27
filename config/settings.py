@@ -88,7 +88,7 @@ MAX_LEVERAGE: Final[int] = 2
 MAX_OPEN_POSITIONS: Final[int] = 10
 MAX_CAPITAL_DEPLOYED_PCT: Final[float] = 0.50
 STOP_LOSS_PCT: Final[float] = 0.05
-TAKE_PROFIT_PCT: Final[float] = 0.15
+TAKE_PROFIT_PCT: Final[float] = 0.10  # must match config/config.json::minimal_roi[0]
 
 DAILY_LOSS_HALVE_PCT: Final[float] = 0.02
 DAILY_LOSS_CLOSE_PCT: Final[float] = 0.03

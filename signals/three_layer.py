@@ -71,6 +71,13 @@ SENT_MULT_75_OFF  = 0.25
 TECH_MULT_CONTRADICTS = 0.75
 SIDEWAYS_SIZE_MULT    = 0.5
 
+# Sentiment threshold for 2x leverage. Lowered 0.3 → 0.2 (2026-05-27) to
+# increase 2x frequency — the previous 0.3 threshold was rarely hit because
+# blended sentiment hovers in [-0.32, -0.08] under contrarian retail L/S
+# weighting. With 0.2, LONG 2x triggers at sent > +0.2 in Bull/Euphoria,
+# SHORT 2x at sent < -0.2 in Bear.
+SENTIMENT_2X_THRESHOLD = 0.2
+
 ALLOWED_LONG_REGIMES  = ("Bull", "Sideways", "Euphoria")
 ALLOWED_SHORT_REGIMES = ("Bear", "Sideways")
 
@@ -132,9 +139,9 @@ def _choose_leverage(decision: str, sentiment: float, regime: str) -> int:
         return 1
     if regime == "Crash":
         return 1
-    if decision == "LONG"  and sentiment >  0.3 and regime in ("Bull", "Euphoria"):
+    if decision == "LONG"  and sentiment >  SENTIMENT_2X_THRESHOLD and regime in ("Bull", "Euphoria"):
         return 2
-    if decision == "SHORT" and sentiment < -0.3 and regime == "Bear":
+    if decision == "SHORT" and sentiment < -SENTIMENT_2X_THRESHOLD and regime == "Bear":
         return 2
     return 1
 

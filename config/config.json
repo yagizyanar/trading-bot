@@ -92,7 +92,7 @@
   },
   "leverage": 2,
   "stoploss": -0.05,
-  "minimal_roi": {"0": 0.15},
+  "minimal_roi": {"0": 0.10},
   "trailing_stop": true,
   "trailing_stop_positive": 0.02,
   "trailing_stop_positive_offset": 0.03,
