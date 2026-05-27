@@ -29,6 +29,24 @@ function fmtQty(n) {
   return n.toFixed(4);
 }
 
+// Format a Freqtrade timestamp as "DD.MM HH:MM" in UTC.
+// Freqtrade serializes timestamps as "YYYY-MM-DD HH:MM:SS" without an
+// explicit timezone but always in UTC; we normalize by appending "Z"
+// when no tz marker is present so Date() doesn't interpret it as local.
+// DB-fallback rows use isoformat() which may already carry "+00:00".
+function fmtTs(s) {
+  if (!s) return "—";
+  let iso = String(s).replace(" ", "T");
+  if (!/Z|[+-]\d{2}:?\d{2}$/.test(iso)) iso += "Z";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "—";
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const hh = String(d.getUTCHours()).padStart(2, "0");
+  const mi = String(d.getUTCMinutes()).padStart(2, "0");
+  return `${dd}.${mm} ${hh}:${mi}`;
+}
+
 function pnlClass(n) {
   if (n == null || isNaN(n) || Math.abs(n) < 1e-6) return "text-slate-300";
   return n > 0 ? "text-emerald-400" : "text-rose-400";
@@ -95,6 +113,7 @@ function OpenTable({ rows }) {
         <tr>
           <th className="text-left py-1 px-2">Coin</th>
           <th className="text-left py-1 px-2">Side</th>
+          <th className="text-left py-1 px-2">Opened</th>
           <th className="text-right py-1 px-2">Lev</th>
           <th className="text-right py-1 px-2">Entry</th>
           <th className="text-right py-1 px-2">Current</th>
@@ -111,6 +130,7 @@ function OpenTable({ rows }) {
           <tr key={r.id ?? `${r.coin}-${r.entry_ts}`} className="border-t border-slate-700">
             <td className="py-1 px-2 font-mono font-semibold">{r.coin}</td>
             <td className={`py-1 px-2 font-medium ${sideClass(r.side)}`}>{r.side}</td>
+            <td className="py-1 px-2 font-mono text-slate-300 text-xs">{fmtTs(r.entry_ts)}</td>
             <td className="py-1 px-2 text-right">{r.leverage ?? 1}x</td>
             <td className="py-1 px-2 text-right font-mono">{fmtPrice(r.entry_price)}</td>
             <td className="py-1 px-2 text-right font-mono">{fmtPrice(r.current_price)}</td>
@@ -127,7 +147,7 @@ function OpenTable({ rows }) {
           </tr>
         ))}
         {rows.length === 0 && (
-          <tr><td colSpan="11" className="py-3 px-2 text-slate-500 italic">no open positions</td></tr>
+          <tr><td colSpan="12" className="py-3 px-2 text-slate-500 italic">no open positions</td></tr>
         )}
       </tbody>
     </table>
@@ -143,6 +163,8 @@ function ClosedTable({ rows }) {
         <tr>
           <th className="text-left py-1 px-2">Coin</th>
           <th className="text-left py-1 px-2">Side</th>
+          <th className="text-left py-1 px-2">Opened</th>
+          <th className="text-left py-1 px-2">Closed</th>
           <th className="text-right py-1 px-2">Entry</th>
           <th className="text-right py-1 px-2">Exit</th>
           <th className="text-right py-1 px-2">Size (USDT)</th>
@@ -156,6 +178,8 @@ function ClosedTable({ rows }) {
           <tr key={r.id ?? `${r.coin}-${r.exit_ts}`} className="border-t border-slate-700">
             <td className="py-1 px-2 font-mono">{r.coin}</td>
             <td className={`py-1 px-2 ${sideClass(r.side)}`}>{r.side}</td>
+            <td className="py-1 px-2 font-mono text-slate-300 text-xs">{fmtTs(r.entry_ts)}</td>
+            <td className="py-1 px-2 font-mono text-slate-300 text-xs">{fmtTs(r.exit_ts)}</td>
             <td className="py-1 px-2 text-right font-mono">{fmtPrice(r.entry_price)}</td>
             <td className="py-1 px-2 text-right font-mono">{fmtPrice(r.exit_price)}</td>
             <td className="py-1 px-2 text-right font-mono">{fmtMoney(r.size_usdt)}</td>
@@ -167,7 +191,7 @@ function ClosedTable({ rows }) {
           </tr>
         ))}
         {rows.length === 0 && (
-          <tr><td colSpan="8" className="py-3 px-2 text-slate-500 italic">no closed positions</td></tr>
+          <tr><td colSpan="10" className="py-3 px-2 text-slate-500 italic">no closed positions</td></tr>
         )}
       </tbody>
     </table>
