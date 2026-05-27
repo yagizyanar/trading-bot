@@ -71,8 +71,14 @@ PAIRS: Final[tuple[str, ...]] = tuple(f"{c}/{QUOTE}" for c in TARGET_COINS)
 
 SECTOR_MAP: Final[dict[str, str]] = {
     "POL": "L2", "ARB": "L2", "OP": "L2",
-    "SOL": "L1", "AVAX": "L1", "DOT": "L1", "APT": "L1", "SUI": "L1",
-    "NEAR": "L1", "S": "L1", "ATOM": "L1",
+    # L1 split (2026-05-27): 8 L1 coins competing for 2 slots was the bot's
+    # most-binding constraint — 121/256 cap-blocks in a 15h window, ~$100
+    # of missed counterfactual PnL. Split by market-cap tier so the
+    # correlation-cap principle (≤2 active per cluster) still applies but
+    # the effective L1 ceiling doubles to 4. Majors move together with
+    # BTC dominance + ETH beta; alts trade more on idiosyncratic narratives.
+    "SOL": "L1-MAJOR", "AVAX": "L1-MAJOR", "NEAR": "L1-MAJOR", "DOT": "L1-MAJOR",
+    "APT": "L1-ALT",   "SUI": "L1-ALT",   "ATOM": "L1-ALT",   "S": "L1-ALT",
     "LINK": "ORACLE",
     "INJ": "DEFI", "DYDX": "DEFI", "GMX": "DEFI",
     "SAND": "GAMING", "MANA": "GAMING", "AXS": "GAMING",
