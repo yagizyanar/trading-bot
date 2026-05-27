@@ -34,11 +34,18 @@ from database import (
 )
 from signals.three_layer import _choose_leverage
 
-from .freqtrade_client import fetch_balance, fetch_closed_trades, fetch_status
+from .freqtrade_client import (
+    fetch_balance, fetch_closed_trades, fetch_status,
+    invalidate_cache as _invalidate_freqtrade_cache,
+)
 
 log = logging.getLogger(__name__)
 
-_CACHE_TTL_SECONDS = 300.0  # 5 minutes — alerts are intentionally low-frequency
+# 5 minutes when everything is green (low overhead), 60 seconds when any
+# alert is non-green (so a transient that recovers within ~1 minute clears
+# from the dashboard quickly instead of sticking around for 5 min).
+_CACHE_TTL_GREEN_SECONDS = 300.0
+_CACHE_TTL_DEGRADED_SECONDS = 60.0
 _CACHE_LOCK = threading.Lock()
 _CACHE: dict = {"ts": 0.0, "alerts": []}
 
@@ -126,10 +133,12 @@ def _check_position_sizes() -> Alert:
     except Exception:
         status, equity = [], 0.0
     if equity <= 0:
-        return Alert("position_sizes", "yellow", "trading",
-                     "Cannot check position sizes",
-                     "Equity unavailable",
-                     "Verify Freqtrade /api/v1/balance")
+        # Equity unavailable means Freqtrade balance is unreachable — that's
+        # already reported by binance_link. Return green here to avoid
+        # double-reporting the same underlying transient.
+        return Alert("position_sizes", "green", "trading",
+                     "Position size check deferred (equity unavailable)",
+                     "binance_link will report the underlying issue")
     outliers = []
     for t in status:
         try:
@@ -464,20 +473,47 @@ def _check_services() -> Alert:
 
 
 def _check_binance_connection() -> Alert:
+    """Retry-once design to avoid false positives from transient blips.
+
+    The freqtrade_client caches None for 5 seconds on a single failed call,
+    so a brief blip would otherwise propagate to RED for one full alerts
+    cycle. Approach: try once; if it returns None, invalidate the
+    freqtrade_client cache and retry after 500ms. Only RED if BOTH attempts
+    fail. If the second attempt succeeds, mark green with a note (so the UI
+    shows it as healthy but the operator knows there was a glitch).
+    """
+    import time as _time
     try:
         bal = fetch_balance()
     except Exception as exc:
         return Alert("binance_link", "red", "system",
                      "Freqtrade API unreachable",
                      str(exc), "systemctl status trading-bot-freqtrade")
-    if bal is None:
+    if bal is not None:
+        return Alert("binance_link", "green", "system",
+                     "Freqtrade <-> Binance link healthy",
+                     f"total={bal.get('total','?')}")
+    # First call returned None — could be a real outage or a transient blip
+    # whose None is sitting in the 5-second freqtrade_client cache.
+    try:
+        _invalidate_freqtrade_cache()
+    except Exception:
+        pass
+    _time.sleep(0.5)
+    try:
+        bal_retry = fetch_balance()
+    except Exception as exc:
         return Alert("binance_link", "red", "system",
-                     "Freqtrade not returning balance data",
-                     "fetch_balance() returned None",
-                     "Check Freqtrade-Binance connectivity in freqtrade.log")
-    return Alert("binance_link", "green", "system",
-                 "Freqtrade <-> Binance link healthy",
-                 f"total={bal.get('total','?')}")
+                     "Freqtrade API unreachable on retry",
+                     str(exc), "systemctl status trading-bot-freqtrade")
+    if bal_retry is not None:
+        return Alert("binance_link", "green", "system",
+                     "Freqtrade <-> Binance link recovered after transient",
+                     f"first call returned None, retry succeeded; total={bal_retry.get('total','?')}")
+    return Alert("binance_link", "red", "system",
+                 "Freqtrade not returning balance data",
+                 "fetch_balance() returned None on first call AND retry",
+                 "Check Freqtrade-Binance connectivity in freqtrade.log; restart trading-bot-freqtrade if persistent")
 
 
 def _check_market_evaluation_gap(session: Session) -> Alert:
@@ -558,11 +594,18 @@ def _compute_alerts_fresh() -> list[dict]:
 
 
 def get_alerts() -> list[dict]:
-    """Cached read. Recomputes every _CACHE_TTL_SECONDS (5 minutes)."""
+    """Cached read. TTL is 5 minutes when all green, 60 seconds when any
+    alert is non-green — so transient red/yellow flakes clear faster.
+    """
     now = time.time()
     with _CACHE_LOCK:
-        if (now - _CACHE["ts"]) < _CACHE_TTL_SECONDS and _CACHE["alerts"]:
-            return list(_CACHE["alerts"])
+        cached_alerts = _CACHE["alerts"]
+        cached_ts = _CACHE["ts"]
+    if cached_alerts:
+        any_non_green = any(a["severity"] != "green" for a in cached_alerts)
+        ttl = _CACHE_TTL_DEGRADED_SECONDS if any_non_green else _CACHE_TTL_GREEN_SECONDS
+        if (now - cached_ts) < ttl:
+            return list(cached_alerts)
     fresh = _compute_alerts_fresh()
     with _CACHE_LOCK:
         _CACHE["ts"] = now
