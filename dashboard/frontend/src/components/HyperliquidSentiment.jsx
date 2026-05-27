@@ -27,7 +27,8 @@ export default function HyperliquidSentiment() {
     <div className="rounded-xl bg-slate-800 p-4">
       <div className="flex items-center justify-between mb-3">
         <div className="text-xs uppercase tracking-wider text-slate-400">
-          Hyperliquid top-trader sentiment
+          Top-trader position ratio
+          <span className="ml-2 text-[10px] normal-case tracking-normal text-slate-500">Binance Futures · whale longs vs shorts</span>
         </div>
         <div className="text-xs text-slate-400">
           {haveData ? `bull ${bullish} / bear ${bearish}` : "awaiting first sample"}

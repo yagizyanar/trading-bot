@@ -15,6 +15,12 @@ positioning information).
   -------------------------------------- : 1.00
   fear_greed                             : MULTIPLIER on the weighted sum
 
+The "hyperliquid" slot is named for legacy/DB-column reasons but is now
+populated by Binance Futures `topLongShortPositionRatio` (smart-money
+positioning). The original Hyperliquid CDN leaderboard broke 2026-05-27
+when its ethAddresses stopped resolving to active clearinghouseState
+accounts — see project_hyperliquid_broken in memory for context.
+
 If a per-coin source is missing, its weight is redistributed proportionally
 among the remaining sources for that coin.
 
@@ -40,10 +46,10 @@ from .binance_data import fetch_binance_ohlcv, volume_anomaly
 from .binance_market import (
     fetch_funding_rate,
     fetch_long_short_ratio,
+    fetch_top_trader_position_ratio,
 )
 from .crypto_news import fetch_crypto_news, score_headlines
 from .fear_greed import fetch_fear_greed
-from .hyperliquid import fetch_top_trader_sentiment
 from .yfinance_data import fetch_yf_price_change
 
 log = logging.getLogger(__name__)
@@ -121,12 +127,6 @@ def compute_unified_scores(
     news_items = fetch_crypto_news(limit=news_limit)
     news_scores = score_headlines(news_items)
 
-    try:
-        hl_readings = fetch_top_trader_sentiment(coins)
-    except Exception as exc:  # noqa: BLE001
-        log.warning("hyperliquid block failed (%s); treating as missing", exc)
-        hl_readings = {}
-
     result: dict[str, UnifiedScore] = {}
     for coin in coins:
         pair = f"{coin}USDT"
@@ -147,8 +147,11 @@ def compute_unified_scores(
         fr_signal = fr.signal if fr else None
         fr_rate = fr.rate if fr else None
 
-        hl = hl_readings.get(coin)
-        hl_signal = hl.signal if hl else None
+        # "hyperliquid" slot is now Binance top-trader position ratio
+        # (per-coin, covers all 18, follows smart money not contrarian).
+        # Hyperliquid CDN leaderboard broke 2026-05-27, see module docstring.
+        tt = fetch_top_trader_position_ratio(coin)
+        hl_signal = tt.signal if tt else None
 
         components = {
             "news": news_signal,

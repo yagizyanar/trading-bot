@@ -23,6 +23,7 @@ from config.settings import API_RETRY_ATTEMPTS, API_TIMEOUT_SECONDS
 log = logging.getLogger(__name__)
 
 LONG_SHORT_URL = "https://fapi.binance.com/futures/data/globalLongShortAccountRatio"
+TOP_TRADER_POSITION_URL = "https://fapi.binance.com/futures/data/topLongShortPositionRatio"
 FUNDING_URL = "https://fapi.binance.com/fapi/v1/fundingRate"
 OPEN_INTEREST_URL = "https://fapi.binance.com/futures/data/openInterestHist"
 
@@ -30,6 +31,10 @@ LONG_SHORT_BEARISH = 1.5
 LONG_SHORT_BULLISH = 0.7
 FUNDING_BEARISH = 0.0001    # +0.01%
 FUNDING_BULLISH = -0.0001   # -0.01%
+
+# Top-trader thresholds. NOT contrarian (we follow smart money, not fade it).
+TOP_TRADER_BULL_LONG_PCT = 0.60   # ≥60% of top-trader positions are long → bullish
+TOP_TRADER_BEAR_LONG_PCT = 0.40   # ≤40% → bearish
 
 
 @dataclass(frozen=True)
@@ -48,6 +53,28 @@ class FundingReading:
     rate: float           # raw funding rate (e.g. 0.0001 = 0.01%)
     timestamp: datetime
     signal: float         # in [-1, +1]
+
+
+@dataclass(frozen=True)
+class TopTraderReading:
+    """Top-trader position bias from Binance futures/data/topLongShortPositionRatio.
+
+    Size-weighted: how Binance's top 20% of accounts (by margin balance) are
+    distributed between LONG and SHORT positions for this coin. Used as a
+    "smart money" signal — follow them, not fade them (opposite logic from
+    the retail-account LongShortReading).
+
+    Replaces the original Hyperliquid top-trader sentiment source after
+    Hyperliquid's CDN leaderboard ethAddresses stopped mapping to queryable
+    clearinghouseState accounts on 2026-05-27. See project_hyperliquid_broken
+    memory entry for context.
+    """
+    coin: str
+    long_pct: float       # fraction in [0,1] of top-trader position notional that's long
+    short_pct: float      # fraction in [0,1] that's short (= 1 - long_pct)
+    ratio: float          # longShortRatio from Binance (long_pct / short_pct)
+    timestamp: datetime
+    signal: float         # in [-1, +1]: positive = top traders are long → bullish
 
 
 @dataclass(frozen=True)
@@ -105,6 +132,48 @@ def fetch_long_short_ratio(coin: str) -> Optional[LongShortReading]:
         )
     except (KeyError, ValueError, TypeError) as exc:
         log.warning("long_short parse failed for %s: %s", coin, exc)
+        return None
+
+
+def _top_trader_signal(long_pct: float) -> float:
+    """Map top-trader long_pct in [0,1] to signal in [-1, +1]. Follow, don't fade.
+
+    0.60 → +0.5, 0.40 → -0.5, between → linear from -0.5 to +0.5,
+    1.00 → +1.0, 0.00 → -1.0.
+    """
+    if long_pct >= TOP_TRADER_BULL_LONG_PCT:
+        return min(1.0, 0.5 + (long_pct - TOP_TRADER_BULL_LONG_PCT) / 0.80)
+    if long_pct <= TOP_TRADER_BEAR_LONG_PCT:
+        return max(-1.0, -0.5 - (TOP_TRADER_BEAR_LONG_PCT - long_pct) / 0.80)
+    return (long_pct - 0.50) * 5.0
+
+
+def fetch_top_trader_position_ratio(coin: str) -> Optional[TopTraderReading]:
+    """Fetch Binance top-trader position-weighted long/short ratio for one coin.
+
+    Uses the topLongShortPositionRatio endpoint (notional-weighted) rather than
+    topLongShortAccountRatio (head-count) — whale positioning carries more signal
+    than the count of small accounts.
+    """
+    pair = f"{coin}USDT"
+    rows = _get(TOP_TRADER_POSITION_URL, {"symbol": pair, "period": "1h", "limit": 1})
+    if not rows:
+        return None
+    try:
+        row = rows[0]
+        long_pct = float(row["longAccount"])
+        short_pct = float(row.get("shortAccount", 1.0 - long_pct))
+        ratio = float(row.get("longShortRatio", long_pct / short_pct if short_pct > 0 else 0.0))
+        return TopTraderReading(
+            coin=coin,
+            long_pct=long_pct,
+            short_pct=short_pct,
+            ratio=ratio,
+            timestamp=datetime.fromtimestamp(int(row["timestamp"]) / 1000, tz=timezone.utc),
+            signal=_top_trader_signal(long_pct),
+        )
+    except (KeyError, ValueError, TypeError) as exc:
+        log.warning("top_trader_position parse failed for %s: %s", coin, exc)
         return None
 
 
