@@ -45,7 +45,6 @@ class MarketEvaluationRoutine(BaseRoutine):
 
         sentiments = compute_unified_scores(TARGET_COINS)
 
-        decisions: list[SignalDecision] = []
         open_coins: set[str] = set(_currently_open_coins())
         deployed_pct = 0.0
 
@@ -57,6 +56,10 @@ class MarketEvaluationRoutine(BaseRoutine):
                 action_next_time=f"Trigger: {cb_state.trigger}",
             )
 
+        # Pass 1: compute raw signal decisions for every coin (no portfolio
+        # gate yet). Decisions can be LONG / SHORT / SKIP based on regime
+        # alignment, markov dead-zone, sentiment, etc.
+        raw_decisions: list[SignalDecision] = []
         for coin in TARGET_COINS:
             regime = regimes.get(coin)
             sent = sentiments.get(coin)
@@ -77,30 +80,44 @@ class MarketEvaluationRoutine(BaseRoutine):
                 cb_multiplier=cb_state.size_multiplier,
                 cb_allows_new=cb_state.allow_new_positions,
             )
+            raw_decisions.append(decision)
 
-            if decision.decision in ("LONG", "SHORT"):
-                ok, reason = can_open_position(
-                    open_position_count=len(open_coins),
-                    deployed_capital_pct=deployed_pct,
-                    candidate_coin=coin,
-                    open_coins=open_coins,
-                    allow_new_positions=cb_state.allow_new_positions,
+        # Pass 2: apply the portfolio gate (max_open, deployed_pct, sector cap)
+        # in CONVICTION ORDER so the strongest setups win contested sector
+        # slots. Without this, TARGET_COINS list order alone determined who
+        # got the slot — e.g. with WIF / 1000BONK / 1000PEPE all generating
+        # SHORT signals in the MEME sector, WIF and 1000BONK (3.75% size from
+        # weaker sentiment) used to claim both MEME slots before 1000PEPE
+        # (5.00% size, also qualifying for 2x leverage) could be evaluated.
+        # Stable sort: ties preserve TARGET_COINS order, so behaviour is
+        # deterministic when convictions tie.
+        skips_from_signal_layer = [d for d in raw_decisions if d.decision == "SKIP"]
+        trade_candidates = [d for d in raw_decisions if d.decision in ("LONG", "SHORT")]
+        trade_candidates.sort(key=lambda d: d.position_size_pct, reverse=True)
+
+        decisions: list[SignalDecision] = list(skips_from_signal_layer)
+        for decision in trade_candidates:
+            ok, reason = can_open_position(
+                open_position_count=len(open_coins),
+                deployed_capital_pct=deployed_pct,
+                candidate_coin=decision.coin,
+                open_coins=open_coins,
+                allow_new_positions=cb_state.allow_new_positions,
+            )
+            if not ok:
+                decision = SignalDecision(
+                    coin=decision.coin, decision="SKIP",
+                    position_size_pct=0.0, dollars=0.0, leverage=1,
+                    markov_signal=decision.markov_signal,
+                    sentiment_score=decision.sentiment_score,
+                    technical_label=decision.technical_label,
+                    regime=decision.regime,
+                    reason=f"portfolio rule: {reason}",
+                    skip_reason=reason,
                 )
-                if not ok:
-                    decision = SignalDecision(
-                        coin=coin, decision="SKIP",
-                        position_size_pct=0.0, dollars=0.0, leverage=1,
-                        markov_signal=decision.markov_signal,
-                        sentiment_score=decision.sentiment_score,
-                        technical_label=decision.technical_label,
-                        regime=decision.regime,
-                        reason=f"portfolio rule: {reason}",
-                        skip_reason=reason,
-                    )
-                else:
-                    open_coins.add(coin)
-                    deployed_pct += decision.position_size_pct
-
+            else:
+                open_coins.add(decision.coin)
+                deployed_pct += decision.position_size_pct
             decisions.append(decision)
 
         _persist_signal_log(decisions)
