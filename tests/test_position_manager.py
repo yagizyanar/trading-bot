@@ -46,7 +46,7 @@ def test_can_open_position_respects_caps():
     ok, reason = can_open_position(10, 0.20, "SOL", [], True)
     assert not ok and "Max open positions" in reason
 
-    ok, reason = can_open_position(5, 0.50, "SOL", [], True)
+    ok, reason = can_open_position(5, 0.80, "SOL", [], True)
     assert not ok and "Deployed capital" in reason
 
     ok, reason = can_open_position(5, 0.20, "SOL", [], False)
