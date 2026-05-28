@@ -41,18 +41,27 @@ DRY_RUN: Final[bool] = os.getenv("DRY_RUN", "true").lower() == "true"
 TIMEZONE: Final[str] = os.getenv("TIMEZONE", "UTC")
 LOG_LEVEL: Final[str] = os.getenv("LOG_LEVEL", "INFO").upper()
 
-# Paper wallet — must match Freqtrade's dry_run_wallet in config/config.json so
-# equity = DRY_RUN_WALLET + closed_pnl + sum(open_profit_abs) reconciles with
-# the trade-by-trade positions view (see PROJECT_HANDOFF.md §5 commit 2bb46cd).
-def _load_dry_run_wallet() -> float:
+# ---------------------------------------------------------------------------
+# Single source of truth: load Freqtrade's config.json once and derive the
+# Python-side constants from it. Avoids drift between config.json (authoritative
+# for Freqtrade itself) and settings.py (used by our routines + risk gates).
+# Falls back to sensible defaults if the file is missing / unreadable so tests
+# and fresh deploys don't blow up before config.json exists.
+# ---------------------------------------------------------------------------
+def _load_freqtrade_config() -> dict:
     import json
     cfg_path = PROJECT_ROOT / "config" / "config.json"
     try:
-        return float(json.loads(cfg_path.read_text(encoding="utf-8")).get("dry_run_wallet", 10000.0))
+        return json.loads(cfg_path.read_text(encoding="utf-8"))
     except Exception:
-        return 10000.0
+        return {}
 
-DRY_RUN_WALLET: Final[float] = _load_dry_run_wallet()
+_FREQTRADE_CONFIG: Final[dict] = _load_freqtrade_config()
+
+# Paper wallet — must match Freqtrade's dry_run_wallet so equity reconciles
+# with the trade-by-trade positions view (see PROJECT_HANDOFF.md §5 commit
+# 2bb46cd: equity = DRY_RUN_WALLET + closed_pnl + sum(open_profit_abs)).
+DRY_RUN_WALLET: Final[float] = float(_FREQTRADE_CONFIG.get("dry_run_wallet", 10000.0))
 
 LOCKFILE_PATH: Final[Path] = PROJECT_ROOT / "TRADING_LOCKED.txt"
 MEMORY_DIR: Final[Path] = PROJECT_ROOT / "memory"
@@ -97,7 +106,10 @@ SECTOR_MAP: Final[dict[str, str]] = {
 }
 
 MAX_LEVERAGE: Final[int] = 2
-MAX_OPEN_POSITIONS: Final[int] = 15  # must match config/config.json::max_open_trades
+# Read directly from config.json::max_open_trades so the internal gate
+# (risk/position_manager.py::can_open_position) and Freqtrade itself can
+# never drift apart. Fallback 10 only kicks in if config.json is missing.
+MAX_OPEN_POSITIONS: Final[int] = int(_FREQTRADE_CONFIG.get("max_open_trades", 10))
 MAX_CAPITAL_DEPLOYED_PCT: Final[float] = 0.75
 STOP_LOSS_PCT: Final[float] = 0.05
 TAKE_PROFIT_PCT: Final[float] = 0.10  # must match config/config.json::minimal_roi[0]
