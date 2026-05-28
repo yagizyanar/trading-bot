@@ -65,6 +65,14 @@ TARGET_COINS: Final[tuple[str, ...]] = (
     # the active perpetual pairs.
     "SOL", "AVAX", "LINK", "DOT", "POL", "INJ", "ARB", "OP", "APT", "SUI",
     "NEAR", "S", "ATOM", "SAND", "MANA", "AXS", "DYDX", "GMX",
+    # MEME sector (added 2026-05-28). BONK and PEPE perpetuals are
+    # 1000x-scaled on Binance — the contract symbols are 1000BONKUSDT and
+    # 1000PEPEUSDT. We use those names as the TARGET_COINS keys directly so
+    # the pair-construction expressions `f"{coin}USDT"` produce the correct
+    # Binance symbol without special-casing.
+    "WIF", "1000BONK", "1000PEPE",
+    # AI sector (added 2026-05-28).
+    "FET", "RENDER", "TAO",
 )
 QUOTE: Final[str] = "USDT"
 PAIRS: Final[tuple[str, ...]] = tuple(f"{c}/{QUOTE}" for c in TARGET_COINS)
@@ -82,6 +90,10 @@ SECTOR_MAP: Final[dict[str, str]] = {
     "LINK": "ORACLE",
     "INJ": "DEFI", "DYDX": "DEFI", "GMX": "DEFI",
     "SAND": "GAMING", "MANA": "GAMING", "AXS": "GAMING",
+    # MEME and AI sectors added 2026-05-28. Cap stays at 2 per sector via
+    # the global CORRELATED_SECTOR_LIMIT.
+    "WIF": "MEME", "1000BONK": "MEME", "1000PEPE": "MEME",
+    "FET": "AI",   "RENDER": "AI",      "TAO": "AI",
 }
 
 MAX_LEVERAGE: Final[int] = 2

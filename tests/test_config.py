@@ -5,11 +5,11 @@ from config import settings
 
 
 def test_target_coins_count():
-    assert len(settings.TARGET_COINS) == 18
+    assert len(settings.TARGET_COINS) == 24
 
 
 def test_pairs_match_target_coins():
-    assert len(settings.PAIRS) == 18
+    assert len(settings.PAIRS) == 24
     assert settings.PAIRS[0] == "SOL/USDT"
 
 
