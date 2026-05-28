@@ -43,7 +43,7 @@ def test_correlation_allows_different_sectors():
 
 
 def test_can_open_position_respects_caps():
-    ok, reason = can_open_position(10, 0.20, "SOL", [], True)
+    ok, reason = can_open_position(15, 0.20, "SOL", [], True)
     assert not ok and "Max open positions" in reason
 
     ok, reason = can_open_position(5, 0.80, "SOL", [], True)

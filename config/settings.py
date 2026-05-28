@@ -97,7 +97,7 @@ SECTOR_MAP: Final[dict[str, str]] = {
 }
 
 MAX_LEVERAGE: Final[int] = 2
-MAX_OPEN_POSITIONS: Final[int] = 10
+MAX_OPEN_POSITIONS: Final[int] = 15  # must match config/config.json::max_open_trades
 MAX_CAPITAL_DEPLOYED_PCT: Final[float] = 0.75
 STOP_LOSS_PCT: Final[float] = 0.05
 TAKE_PROFIT_PCT: Final[float] = 0.10  # must match config/config.json::minimal_roi[0]
