@@ -8,6 +8,7 @@ import pytest
 from backtest.benchmarks import buy_and_hold, random_entry, sma_200
 from backtest.daily_walk_forward import (
     always_short_returns,
+    compute_atr_pct,
     efficiency_ratio,
     equal_weight_portfolio,
     market_beta,
@@ -208,6 +209,31 @@ def test_regime_scaled_runs_with_scaling():
     out = regime_scaled_portfolio(closes, list("ABCDE"), in_sample=252, cap=3,
                                   er_floor=0.3, er_thresh=0.4)
     assert out is not None and len(out) > 0
+
+
+def test_compute_atr_pct_positive_and_aligned():
+    rng = np.random.default_rng(21)
+    close = 100.0 * (1 + 0.02 * rng.standard_normal(200)).cumprod()
+    df = pd.DataFrame({
+        "high": close * 1.01, "low": close * 0.99, "close": close, "open": close,
+    })
+    atr = compute_atr_pct(df, window=14)
+    assert len(atr) == len(df)
+    assert np.all(atr >= 0) and atr[-1] > 0
+
+
+def test_simulate_coin_atr_disabled_equals_fixed(synthetic_uptrend):
+    """atr_pct=None must reproduce the fixed-stop path exactly."""
+    a = simulate_coin(synthetic_uptrend, in_sample=252, stop=0.05)
+    b = simulate_coin(synthetic_uptrend, in_sample=252, stop=0.05, atr_pct=None, atr_k=None)
+    assert np.allclose(a.net_daily.to_numpy(), b.net_daily.to_numpy(), atol=1e-12)
+
+
+def test_simulate_coin_atr_runs(synthetic_uptrend):
+    atr = np.full(len(synthetic_uptrend), 0.03)   # 3% ATR
+    res = simulate_coin(synthetic_uptrend, in_sample=252, atr_pct=atr, atr_k=2.5)
+    assert len(res.net_daily) > 0
+    assert res.metrics.n_trades >= 0
 
 
 def test_stress_tests_run_all_scenarios(synthetic_uptrend):

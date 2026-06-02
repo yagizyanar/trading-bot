@@ -116,6 +116,20 @@ class DailyWalkForwardResult:
     metrics: PerformanceMetrics
 
 
+def compute_atr_pct(df: pd.DataFrame, window: int = 14) -> np.ndarray:
+    """ATR as a fraction of price: ATR(window) / close. Needs OHLC columns.
+
+    True Range = max(high-low, |high-prev_close|, |low-prev_close|). Returned
+    array is aligned to df rows; early values back-filled, NaNs → 0.
+    """
+    high, low, close = df["high"], df["low"], df["close"]
+    prev = close.shift(1)
+    tr = pd.concat([(high - low), (high - prev).abs(), (low - prev).abs()], axis=1).max(axis=1)
+    atr = tr.rolling(window).mean()
+    out = (atr / close).bfill().fillna(0.0)
+    return out.to_numpy()
+
+
 def simulate_coin(
     close: pd.Series,
     coin: str = "?",
@@ -124,12 +138,17 @@ def simulate_coin(
     stop: float = DEFAULT_STOP,
     gate: float = DEFAULT_SIGNAL_GATE,
     signal_fn: Optional[Callable[[pd.Series], float]] = None,
+    atr_pct: Optional[np.ndarray] = None,
+    atr_k: Optional[float] = None,
 ) -> DailyWalkForwardResult:
     """Daily-rebalanced long/short walk-forward for one coin.
 
     `signal_fn(train_close) -> target position in [-1, +1]`. Defaults to the
     quantized Markov signal (`markov_position`) so behaviour is unchanged.
-    Pass `momentum_position`-style callables for the A/B.
+
+    Stop: if `atr_pct` (array aligned to `close`) and `atr_k` are given, the
+    per-day stop distance is `atr_k * atr_pct[t-1]` (volatility-adaptive,
+    causal). Otherwise the fixed `stop` fraction is used (default behaviour).
     """
     if signal_fn is None:
         signal_fn = lambda tc: markov_position(tc, gate=gate)
@@ -137,6 +156,10 @@ def simulate_coin(
     close = close.dropna().reset_index(drop=True)
     rets = close.pct_change().fillna(0.0).to_numpy()
     n = len(close)
+    if atr_pct is not None:
+        atr_pct = np.asarray(atr_pct, dtype=float)
+        if len(atr_pct) != n:        # misaligned → ignore, fall back to fixed stop
+            atr_pct = None
     if n < in_sample + 30:
         empty = pd.Series(dtype=float)
         return DailyWalkForwardResult(
@@ -155,11 +178,18 @@ def simulate_coin(
 
         day_ret = rets[t] * pos
         # Hard-stop on the UNDERLYING adverse move (works for fractional pos):
-        # if price moved more than `stop` against the position, exit at the stop,
-        # loss scaled by position size. For pos=±1 this equals the old behaviour.
-        if pos != 0.0 and (-rets[t] * np.sign(pos)) > stop:
-            day_ret = -stop * abs(pos)
-            target = 0.0
+        # if price moved more than the stop distance against the position, exit
+        # at the stop, loss scaled by position size. Stop distance is either the
+        # fixed `stop` or volatility-adaptive `atr_k * atr_pct[t-1]` (causal).
+        if pos != 0.0:
+            stop_t = stop
+            if atr_pct is not None and atr_k is not None and t >= 1:
+                cand = atr_k * float(atr_pct[t - 1])
+                if cand > 0:
+                    stop_t = cand
+            if (-rets[t] * np.sign(pos)) > stop_t:
+                day_ret = -stop_t * abs(pos)
+                target = 0.0
 
         gross[t] = day_ret
         posarr[t] = pos
@@ -227,6 +257,8 @@ def equal_weight_portfolio(
     cap: Optional[int] = None,
     eval_start: Optional[int] = None,
     signal_fn: Optional[Callable[[pd.Series], float]] = None,
+    atr_pcts: Optional[dict[str, np.ndarray]] = None,
+    atr_k: Optional[float] = None,
 ) -> Optional[pd.Series]:
     """Equal-weight daily-rebalanced portfolio net daily returns.
 
@@ -235,6 +267,7 @@ def equal_weight_portfolio(
     `eval_start` truncates every coin to a common global day index so different
     in_sample windows are compared on IDENTICAL out-of-sample days.
     `signal_fn` selects the signal (default markov); pass momentum variants for A/B.
+    `atr_pcts`/`atr_k` enable volatility-adaptive per-coin stops.
     """
     sims: dict[str, tuple] = {}
     for c in universe:
@@ -245,8 +278,10 @@ def equal_weight_portfolio(
         need = (eval_start if eval_start is not None else in_sample) + 40
         if len(cl) < need:
             continue
+        ap = atr_pcts.get(c) if atr_pcts else None
         res = simulate_coin(cl, c, in_sample=in_sample, cost_per_side=0.0,
-                            stop=stop, gate=gate, signal_fn=signal_fn)
+                            stop=stop, gate=gate, signal_fn=signal_fn,
+                            atr_pct=ap, atr_k=atr_k)
         mom = cl.pct_change(20).abs().fillna(0.0).to_numpy()
         # align positions/gross to a full-length array indexed from 0
         full_pos = np.zeros(len(cl)); full_gross = np.zeros(len(cl))
