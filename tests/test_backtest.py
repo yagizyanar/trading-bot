@@ -9,6 +9,8 @@ from backtest.benchmarks import buy_and_hold, random_entry, sma_200
 from backtest.daily_walk_forward import (
     always_short_returns,
     equal_weight_portfolio,
+    momentum_position,
+    momentum_zscore,
     simulate_coin,
 )
 from backtest.metrics import compute_metrics, meets_minimum_requirements
@@ -122,6 +124,33 @@ def test_always_short_returns_sign(synthetic_uptrend):
     long_daily = synthetic_uptrend.pct_change().fillna(0.0).reset_index(drop=True)[252:]
     # short return ≈ negated long return (minus the one entry cost on day 0)
     assert short.iloc[5] == pytest.approx(-long_daily.reset_index(drop=True).iloc[5], abs=1e-9)
+
+
+def test_momentum_zscore_sign_tracks_trend():
+    up = pd.Series(100.0 * (1.01 ** np.arange(60)), dtype=float)     # steady uptrend
+    down = pd.Series(100.0 * (0.99 ** np.arange(60)), dtype=float)   # steady downtrend
+    assert momentum_zscore(up, window=20).iloc[-1] > 0
+    assert momentum_zscore(down, window=20).iloc[-1] < 0
+
+
+def test_momentum_position_directionality():
+    up = pd.Series(100.0 * (1.01 ** np.arange(60)), dtype=float)
+    down = pd.Series(100.0 * (0.99 ** np.arange(60)), dtype=float)
+    assert momentum_position(up, window=20, gate_z=0.5) == 1.0
+    assert momentum_position(down, window=20, gate_z=0.5) == -1.0
+
+
+def test_momentum_position_sized_is_continuous_and_bounded():
+    up = pd.Series(100.0 * (1.02 ** np.arange(60)), dtype=float)
+    p = momentum_position(up, window=20, gate_z=0.3, sized=True, z_scale=2.0)
+    assert 0.0 < p <= 1.0          # conviction-weighted, capped at 1
+
+
+def test_simulate_coin_accepts_momentum_signal(synthetic_uptrend):
+    res = simulate_coin(synthetic_uptrend, coin="MOM", in_sample=252,
+                        signal_fn=lambda tc: momentum_position(tc, sized=True))
+    assert res.coin == "MOM"
+    assert len(res.net_daily) > 0
 
 
 def test_stress_tests_run_all_scenarios(synthetic_uptrend):
