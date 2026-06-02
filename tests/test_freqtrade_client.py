@@ -197,16 +197,18 @@ def test_map_freqtrade_trade_open_short():
     assert m["current_value_usdt"] == pytest.approx(5.84 * 85.52)
     # SL price comes straight from Freqtrade
     assert m["stop_loss_price"] == 89.82
-    # TP price computed from open_rate and TAKE_PROFIT_PCT (1.0 from settings —
-    # ROI exit effectively disabled in favour of trailing-stop-only exits).
-    # SHORT entry at 85.54 → TP at 85.54 * (1 - 1.0) = 0.0 (unreachable).
-    assert m["take_profit_price"] == pytest.approx(85.54 * 0.0)
+    # TAKE_PROFIT_PCT=1.0 in settings (ROI exit disabled). Dashboard now shows
+    # None → "—" instead of a misleading $0 (SHORT) or 2× entry (LONG).
+    assert m["take_profit_price"] is None
     assert m["outcome"] == "OPEN"
     assert m["is_paper"] is True
     assert m["reason_in"] == "freqtrade"
 
 
-def test_map_freqtrade_trade_tp_price_long_is_higher_than_entry():
+def test_map_freqtrade_trade_tp_price_returns_none_when_disabled():
+    # When TAKE_PROFIT_PCT >= 0.99 (current production: 1.0), the dashboard
+    # surfaces None so the UI renders "—" instead of a misleading 2× entry
+    # for LONGs or $0 for SHORTs.
     raw = {
         "trade_id": 99, "pair": "INJ/USDT:USDT",
         "is_short": False, "is_open": True,
@@ -215,9 +217,17 @@ def test_map_freqtrade_trade_tp_price_long_is_higher_than_entry():
     }
     m = freqtrade_client.map_freqtrade_trade(raw)
     assert m["side"] == "LONG"
-    assert m["take_profit_price"] > m["entry_price"]
-    # LONG: with TAKE_PROFIT_PCT=1.0, TP price is 2x entry — also unreachable.
-    assert m["take_profit_price"] == pytest.approx(5.666 * 2.0)
+    assert m["take_profit_price"] is None
+
+
+def test_take_profit_price_helper_enabled_and_disabled():
+    """Exercise the underlying helper for both states by passing tp_pct explicitly."""
+    # Enabled: normal directional computation.
+    assert freqtrade_client._take_profit_price(100.0, is_short=False, tp_pct=0.10) == pytest.approx(110.0)
+    assert freqtrade_client._take_profit_price(100.0, is_short=True,  tp_pct=0.10) == pytest.approx(90.0)
+    # Disabled threshold (>=0.99) → None regardless of side.
+    assert freqtrade_client._take_profit_price(100.0, is_short=False, tp_pct=1.0)  is None
+    assert freqtrade_client._take_profit_price(100.0, is_short=True,  tp_pct=0.99) is None
 
 
 def test_map_freqtrade_trade_size_usdt_falls_back_when_stake_missing():

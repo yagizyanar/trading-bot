@@ -127,6 +127,10 @@ def _take_profit_price(open_rate: Optional[float], is_short: bool,
     if tp_pct is None:
         from config.settings import TAKE_PROFIT_PCT
         tp_pct = float(TAKE_PROFIT_PCT)
+    # TP effectively disabled (>=99%): return None so the dashboard renders
+    # "—" via fmtPrice instead of a misleading $0 (SHORT) or 2× entry (LONG).
+    if tp_pct >= 0.99:
+        return None
     try:
         rate = float(open_rate)
     except (TypeError, ValueError):
