@@ -283,6 +283,87 @@ def equal_weight_portfolio(
     return pd.Series(net, dtype=float)
 
 
+def market_neutral_portfolio(
+    closes: dict[str, pd.Series],
+    universe: Iterable[str],
+    in_sample: int = BACKTEST_IN_SAMPLE_DAYS,
+    k: int = 3,
+    cost_per_side: float = DEFAULT_COST_PER_SIDE,
+    window: int = MARKOV_WINDOW,
+    eval_start: Optional[int] = None,
+    gross: float = 1.0,
+) -> Optional[tuple[pd.Series, pd.Series]]:
+    """Cross-sectional market-neutral momentum.
+
+    Each day: rank the universe by vol-normalized momentum z-score (computed
+    from data through t-1), go LONG the top-k and SHORT the bottom-k, sized
+    dollar-neutral (equal long & short notional, total gross = `gross`, net = 0).
+
+    Returns (net_daily, market_daily) where market_daily is the equal-weight
+    universe return — so the caller can regress for realized beta (a true
+    market-neutral book should land near 0).
+
+    NOTE: dollar-neutral ≈ beta-neutral for crypto alts (betas cluster near 1
+    vs BTC). True beta-weighting would scale each leg by estimated beta; that's
+    a refinement to add only if this version earns its keep.
+    """
+    z_series: dict[str, np.ndarray] = {}
+    ret_series: dict[str, np.ndarray] = {}
+    for c in universe:
+        cl = closes.get(c)
+        if cl is None:
+            continue
+        cl = cl.dropna().reset_index(drop=True)
+        need = (eval_start if eval_start is not None else in_sample) + 40
+        if len(cl) < need:
+            continue
+        z_series[c] = momentum_zscore(cl, window).to_numpy()
+        ret_series[c] = cl.pct_change().fillna(0.0).to_numpy()
+
+    coins = [c for c in z_series]
+    if len(coins) < 2 * k:
+        return None
+    start = eval_start if eval_start is not None else in_sample
+    common = min(len(z_series[c]) - start for c in coins)
+    if common <= 1:
+        return None
+
+    Z = np.vstack([z_series[c][start:start + common] for c in coins])
+    R = np.vstack([ret_series[c][start:start + common] for c in coins])
+    ndays = common
+    net = np.zeros(ndays)
+    mkt = np.zeros(ndays)
+    prev_w = np.zeros(len(coins))
+    half = gross / 2.0
+
+    for d in range(ndays):
+        mkt[d] = float(np.nanmean(R[:, d]))
+        w = np.zeros(len(coins))
+        if d >= 1:                                  # decide from prior day's z (causal)
+            zcol = Z[:, d - 1]
+            valid = np.where(~np.isnan(zcol))[0]
+            if len(valid) >= 2 * k:
+                order = valid[np.argsort(zcol[valid])]   # ascending z
+                shorts, longs = order[:k], order[-k:]
+                for i in longs:
+                    w[i] = half / k
+                for i in shorts:
+                    w[i] = -half / k
+        net[d] = float(np.nansum(w * R[:, d])) - cost_per_side * np.abs(w - prev_w).sum()
+        prev_w = w
+    return pd.Series(net, dtype=float), pd.Series(mkt, dtype=float)
+
+
+def market_beta(strategy_daily: pd.Series, market_daily: pd.Series) -> float:
+    """OLS beta of strategy returns on the equal-weight market return."""
+    s = strategy_daily.fillna(0.0).to_numpy()
+    m = market_daily.fillna(0.0).to_numpy()
+    L = min(len(s), len(m))
+    s, m = s[-L:], m[-L:]
+    var = np.var(m, ddof=1)
+    return float(np.cov(s, m, ddof=1)[0, 1] / var) if var > 0 else 0.0
+
+
 def portfolio_sharpe(daily: pd.Series, periods_per_year: int = PERIODS_PER_YEAR) -> float:
     d = daily.dropna().to_numpy()
     if len(d) < 2 or d.std(ddof=1) == 0:

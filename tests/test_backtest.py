@@ -9,6 +9,8 @@ from backtest.benchmarks import buy_and_hold, random_entry, sma_200
 from backtest.daily_walk_forward import (
     always_short_returns,
     equal_weight_portfolio,
+    market_beta,
+    market_neutral_portfolio,
     momentum_position,
     momentum_zscore,
     simulate_coin,
@@ -151,6 +153,32 @@ def test_simulate_coin_accepts_momentum_signal(synthetic_uptrend):
                         signal_fn=lambda tc: momentum_position(tc, sized=True))
     assert res.coin == "MOM"
     assert len(res.net_daily) > 0
+
+
+def test_market_neutral_portfolio_runs_and_is_dollar_neutral():
+    rng = np.random.default_rng(3)
+    closes = {}
+    for name in list("ABCDEFGH"):
+        r = 0.0003 * rng.standard_normal() + 0.013 * rng.standard_normal(800)
+        closes[name] = pd.Series(100.0 * (1 + r).cumprod(), dtype=float)
+    out = market_neutral_portfolio(closes, list("ABCDEFGH"), in_sample=252, k=2)
+    assert out is not None
+    net, mkt = out
+    assert len(net) == len(mkt) and len(net) > 0
+
+
+def test_market_neutral_needs_enough_coins():
+    rng = np.random.default_rng(4)
+    closes = {c: pd.Series(100.0 * (1 + 0.01 * rng.standard_normal(400)).cumprod(), dtype=float)
+              for c in ("A", "B")}
+    # k=2 needs >=4 coins; only 2 provided -> None
+    assert market_neutral_portfolio(closes, ["A", "B"], in_sample=252, k=2) is None
+
+
+def test_market_beta_of_self_is_one():
+    rng = np.random.default_rng(5)
+    m = pd.Series(0.01 * rng.standard_normal(300), dtype=float)
+    assert market_beta(m, m) == pytest.approx(1.0, abs=1e-6)
 
 
 def test_stress_tests_run_all_scenarios(synthetic_uptrend):
