@@ -161,8 +161,18 @@ def detect_regime(close: pd.Series, coin: str) -> RegimeResult:
     )
 
 
-def compute_regime_for_coin(coin: str, days: int = 365 * 2) -> RegimeResult:
-    """End-to-end: fetch Binance daily candles, run regime detection."""
+def compute_regime_for_coin(coin: str, days: int = 365) -> RegimeResult:
+    """End-to-end: fetch Binance daily candles, run regime detection.
+
+    Window: 365 days. A controlled walk-forward sweep (2026-06-02, evaluating
+    252/365/540/730-day windows on IDENTICAL out-of-sample days) found window
+    length is roughly immaterial for edge — Sharpe 2.26-2.32 across all windows
+    on the survivorship-controlled majors universe, with 365 marginally best.
+    Chose 365 over the previous 730 because a shorter window adapts a little
+    faster to structural change while 365 daily bars is still ample for a
+    stable 3x3 transition-matrix estimate. The difference is noise-level; this
+    is a low-stakes, reversible choice. See backtest/daily_walk_forward.py.
+    """
     pair = f"{coin}USDT"
     df = fetch_binance_ohlcv(pair, interval="1d", limit=min(days, 1500))
     if df is None or df.empty:
