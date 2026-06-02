@@ -197,9 +197,10 @@ def test_map_freqtrade_trade_open_short():
     assert m["current_value_usdt"] == pytest.approx(5.84 * 85.52)
     # SL price comes straight from Freqtrade
     assert m["stop_loss_price"] == 89.82
-    # TP price computed from open_rate and TAKE_PROFIT_PCT (10% from settings).
-    # SHORT entry at 85.54 → TP at 85.54 * (1 - 0.10) = 76.986
-    assert m["take_profit_price"] == pytest.approx(85.54 * 0.90)
+    # TP price computed from open_rate and TAKE_PROFIT_PCT (1.0 from settings —
+    # ROI exit effectively disabled in favour of trailing-stop-only exits).
+    # SHORT entry at 85.54 → TP at 85.54 * (1 - 1.0) = 0.0 (unreachable).
+    assert m["take_profit_price"] == pytest.approx(85.54 * 0.0)
     assert m["outcome"] == "OPEN"
     assert m["is_paper"] is True
     assert m["reason_in"] == "freqtrade"
@@ -215,7 +216,8 @@ def test_map_freqtrade_trade_tp_price_long_is_higher_than_entry():
     m = freqtrade_client.map_freqtrade_trade(raw)
     assert m["side"] == "LONG"
     assert m["take_profit_price"] > m["entry_price"]
-    assert m["take_profit_price"] == pytest.approx(5.666 * 1.10)
+    # LONG: with TAKE_PROFIT_PCT=1.0, TP price is 2x entry — also unreachable.
+    assert m["take_profit_price"] == pytest.approx(5.666 * 2.0)
 
 
 def test_map_freqtrade_trade_size_usdt_falls_back_when_stake_missing():

@@ -112,7 +112,12 @@ MAX_LEVERAGE: Final[int] = 2
 MAX_OPEN_POSITIONS: Final[int] = int(_FREQTRADE_CONFIG.get("max_open_trades", 10))
 MAX_CAPITAL_DEPLOYED_PCT: Final[float] = 0.75
 STOP_LOSS_PCT: Final[float] = 0.05
-TAKE_PROFIT_PCT: Final[float] = 0.10  # must match config/config.json::minimal_roi[0]
+# Effectively disabled — exit logic is trailing stop + hard stoploss + signal
+# flip only. 1.0 means "TP at 100% profit", which is never reached. Matches
+# config/config.json::minimal_roi[0] = 100 (Freqtrade interprets as 10000%).
+# Dashboard TP-price display and position_monitor TP_NEAR alerts read this
+# constant — keeping them aligned avoids spurious "TP at $X" rendering.
+TAKE_PROFIT_PCT: Final[float] = 1.0
 
 DAILY_LOSS_HALVE_PCT: Final[float] = 0.02
 DAILY_LOSS_CLOSE_PCT: Final[float] = 0.03
