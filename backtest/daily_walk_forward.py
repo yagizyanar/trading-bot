@@ -354,6 +354,105 @@ def market_neutral_portfolio(
     return pd.Series(net, dtype=float), pd.Series(mkt, dtype=float)
 
 
+def efficiency_ratio(index: np.ndarray, window: int) -> np.ndarray:
+    """Kaufman Efficiency Ratio: |net move| / sum(|daily moves|) over `window`.
+
+    ER → 1.0 = clean directional trend; ER → 0.0 = choppy/mean-reverting.
+    Returns an array aligned to `index` (NaN for the first `window` points).
+    """
+    n = len(index)
+    er = np.full(n, np.nan)
+    for i in range(window, n):
+        net = abs(index[i] - index[i - window])
+        path = np.abs(np.diff(index[i - window:i + 1])).sum()
+        er[i] = (net / path) if path > 0 else 0.0
+    return er
+
+
+def regime_scaled_portfolio(
+    closes: dict[str, pd.Series],
+    universe: Iterable[str],
+    in_sample: int = BACKTEST_IN_SAMPLE_DAYS,
+    cost_per_side: float = DEFAULT_COST_PER_SIDE,
+    stop: float = DEFAULT_STOP,
+    gate: float = DEFAULT_SIGNAL_GATE,
+    cap: Optional[int] = None,
+    eval_start: Optional[int] = None,
+    signal_fn: Optional[Callable[[pd.Series], float]] = None,
+    er_window: int = 20,
+    er_floor: float = 0.3,
+    er_thresh: float = 0.4,
+) -> Optional[pd.Series]:
+    """Directional book with REGIME-RISK exposure scaling.
+
+    Identical position selection to equal_weight_portfolio, but each day the
+    whole book's gross is scaled by an exposure multiplier derived from the
+    market's Efficiency Ratio (computed causally from the equal-weight index
+    through t-1):
+        ER >= er_thresh  -> full exposure (1.0)
+        ER -> 0          -> exposure floor (er_floor)
+        linear in between
+    Thesis: chop days whipsaw the trend signal and net-lose; scaling them down
+    should cut the bad days more than the good. Set er_floor=1.0 to disable
+    (recovers the unscaled book).
+    """
+    sims: dict[str, tuple] = {}
+    for c in universe:
+        cl = closes.get(c)
+        if cl is None:
+            continue
+        cl = cl.dropna().reset_index(drop=True)
+        need = (eval_start if eval_start is not None else in_sample) + 40
+        if len(cl) < need:
+            continue
+        res = simulate_coin(cl, c, in_sample=in_sample, cost_per_side=0.0,
+                            stop=stop, gate=gate, signal_fn=signal_fn)
+        mom = cl.pct_change(20).abs().fillna(0.0).to_numpy()
+        raw_ret = cl.pct_change().fillna(0.0).to_numpy()
+        full_pos = np.zeros(len(cl)); full_gross = np.zeros(len(cl))
+        full_pos[in_sample:] = res.positions.to_numpy()
+        full_gross[in_sample:] = np.nan_to_num(res.gross_daily.to_numpy())
+        sims[c] = (full_pos, full_gross, mom, raw_ret)
+    if not sims:
+        return None
+
+    coins = list(sims.keys())
+    start = eval_start if eval_start is not None else in_sample
+    common = min(len(sims[c][0]) - start for c in coins)
+    if common <= 1:
+        return None
+    POS = np.vstack([sims[c][0][start:start + common] for c in coins])
+    GROSS = np.vstack([sims[c][1][start:start + common] for c in coins])
+    MOM = np.vstack([sims[c][2][start:start + common] for c in coins])
+    R = np.vstack([sims[c][3][start:start + common] for c in coins])
+
+    # Market regime: efficiency ratio of the true equal-weight index (causal).
+    mkt_ret = R.mean(axis=0)
+    mkt_idx = np.cumprod(1.0 + mkt_ret)
+    ER = efficiency_ratio(mkt_idx, er_window)
+    exposure = np.clip(er_floor + (1.0 - er_floor) * (ER / er_thresh), er_floor, 1.0)
+    exposure = np.where(np.isnan(ER), 1.0, exposure)   # full exposure before ER is defined
+
+    net = np.zeros(common)
+    prev_w = np.zeros(len(coins))
+    for d in range(common):
+        active = np.where(POS[:, d] != 0.0)[0]
+        if cap is not None and len(active) > cap:
+            active = active[np.argsort(-MOM[active, d])][:cap]
+        w = np.zeros(len(coins)); g = 0.0
+        if len(active) > 0:
+            wt = 1.0 / len(active)
+            for i in active:
+                w[i] = wt * POS[i, d]
+                g += wt * GROSS[i, d]
+        mult = exposure[d - 1] if d >= 1 else 1.0      # causal: scale from prior-day ER
+        w = w * mult
+        g = g * mult
+        net[d] = g - cost_per_side * np.abs(w - prev_w).sum()
+        prev_w = w
+    return pd.Series(net, dtype=float)
+
+
 def market_beta(strategy_daily: pd.Series, market_daily: pd.Series) -> float:
     """OLS beta of strategy returns on the equal-weight market return."""
     s = strategy_daily.fillna(0.0).to_numpy()

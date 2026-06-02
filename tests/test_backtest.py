@@ -8,11 +8,13 @@ import pytest
 from backtest.benchmarks import buy_and_hold, random_entry, sma_200
 from backtest.daily_walk_forward import (
     always_short_returns,
+    efficiency_ratio,
     equal_weight_portfolio,
     market_beta,
     market_neutral_portfolio,
     momentum_position,
     momentum_zscore,
+    regime_scaled_portfolio,
     simulate_coin,
 )
 from backtest.metrics import compute_metrics, meets_minimum_requirements
@@ -179,6 +181,33 @@ def test_market_beta_of_self_is_one():
     rng = np.random.default_rng(5)
     m = pd.Series(0.01 * rng.standard_normal(300), dtype=float)
     assert market_beta(m, m) == pytest.approx(1.0, abs=1e-6)
+
+
+def test_efficiency_ratio_trend_vs_chop():
+    trend = np.cumprod(1 + np.full(60, 0.01))           # straight up = ER≈1
+    chop = 100 + np.array([1, -1] * 30, dtype=float)    # zig-zag = ER≈0
+    assert efficiency_ratio(trend, 20)[-1] > 0.9
+    assert efficiency_ratio(chop, 20)[-1] < 0.2
+
+
+def test_regime_scaled_disabled_equals_unscaled():
+    """er_floor=1.0 disables scaling → must match equal_weight_portfolio exactly."""
+    rng = np.random.default_rng(11)
+    closes = {c: pd.Series(100.0 * (1 + 0.012 * rng.standard_normal(800)).cumprod(), dtype=float)
+              for c in list("ABCDE")}
+    base = equal_weight_portfolio(closes, list("ABCDE"), in_sample=252, cap=3)
+    scaled = regime_scaled_portfolio(closes, list("ABCDE"), in_sample=252, cap=3, er_floor=1.0)
+    assert base is not None and scaled is not None
+    assert np.allclose(base.to_numpy(), scaled.to_numpy(), atol=1e-9)
+
+
+def test_regime_scaled_runs_with_scaling():
+    rng = np.random.default_rng(12)
+    closes = {c: pd.Series(100.0 * (1 + 0.012 * rng.standard_normal(800)).cumprod(), dtype=float)
+              for c in list("ABCDE")}
+    out = regime_scaled_portfolio(closes, list("ABCDE"), in_sample=252, cap=3,
+                                  er_floor=0.3, er_thresh=0.4)
+    assert out is not None and len(out) > 0
 
 
 def test_stress_tests_run_all_scenarios(synthetic_uptrend):
