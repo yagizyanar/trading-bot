@@ -1,4 +1,11 @@
-"""Walk-forward backtest.
+"""Walk-forward backtest (regime-PERSISTENCE study — NOT the live strategy).
+
+⚠️  For an edge test that reflects a frequently-re-evaluating strategy WITH
+    transaction costs, use `backtest.daily_walk_forward` instead. This module
+    holds a single position static for the whole out-of-sample window (~180
+    days) and models zero costs — it answers "does the regime label persist?",
+    not "does the trading strategy have a net edge?". Kept for that narrower
+    research question and backwards-compatibility.
 
 Methodology (per backtesting-protocol skill):
   - In-sample window: 252 trading days

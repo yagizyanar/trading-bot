@@ -6,6 +6,11 @@ import pandas as pd
 import pytest
 
 from backtest.benchmarks import buy_and_hold, random_entry, sma_200
+from backtest.daily_walk_forward import (
+    always_short_returns,
+    equal_weight_portfolio,
+    simulate_coin,
+)
 from backtest.metrics import compute_metrics, meets_minimum_requirements
 from backtest.stress_tests import run_stress_tests
 from backtest.walk_forward import run_walk_forward
@@ -71,6 +76,52 @@ def test_walk_forward_short_series_degrades(synthetic_uptrend):
     short = synthetic_uptrend.iloc[:100]
     res = run_walk_forward(short, coin="TEST")
     assert res.n_windows == 0
+
+
+def test_daily_walk_forward_runs(synthetic_uptrend):
+    res = simulate_coin(synthetic_uptrend, coin="TEST", in_sample=252)
+    assert res.coin == "TEST"
+    assert len(res.net_daily) > 0
+    assert len(res.positions) == len(res.net_daily)
+
+
+def test_daily_walk_forward_short_series_degrades():
+    short = pd.Series(100.0 + np.arange(50), dtype=float)
+    res = simulate_coin(short, coin="TEST", in_sample=252)
+    assert len(res.net_daily) == 0
+    assert res.metrics.n_trades == 0
+
+
+def test_daily_walk_forward_positions_are_causal(synthetic_uptrend):
+    """No look-ahead: truncating FUTURE data must not change EARLIER positions."""
+    full = simulate_coin(synthetic_uptrend, in_sample=252)
+    truncated = simulate_coin(synthetic_uptrend.iloc[:600], in_sample=252)
+    k = len(truncated.positions)
+    assert k > 0
+    assert full.positions.iloc[:k].tolist() == truncated.positions.iloc[:k].tolist()
+
+
+def test_daily_walk_forward_costs_reduce_returns(synthetic_uptrend):
+    cheap = simulate_coin(synthetic_uptrend, in_sample=252, cost_per_side=0.0)
+    pricey = simulate_coin(synthetic_uptrend, in_sample=252, cost_per_side=0.005)
+    assert cheap.net_daily.sum() >= pricey.net_daily.sum()
+
+
+def test_equal_weight_portfolio_smoke(synthetic_uptrend):
+    rng = np.random.default_rng(1)
+    closes = {}
+    for name in ("A", "B", "C"):
+        r = 0.0004 + 0.012 * rng.standard_normal(800)
+        closes[name] = pd.Series(100.0 * (1 + r).cumprod(), dtype=float)
+    port = equal_weight_portfolio(closes, ["A", "B", "C"], in_sample=252, cap=2)
+    assert port is not None and len(port) > 0
+
+
+def test_always_short_returns_sign(synthetic_uptrend):
+    short = always_short_returns(synthetic_uptrend, in_sample=252)
+    long_daily = synthetic_uptrend.pct_change().fillna(0.0).reset_index(drop=True)[252:]
+    # short return ≈ negated long return (minus the one entry cost on day 0)
+    assert short.iloc[5] == pytest.approx(-long_daily.reset_index(drop=True).iloc[5], abs=1e-9)
 
 
 def test_stress_tests_run_all_scenarios(synthetic_uptrend):
