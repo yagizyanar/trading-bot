@@ -30,7 +30,7 @@ def test_closed_positions_returns_newest_first(monkeypatch):
 
     monkeypatch.setattr(pos, "fetch_closed_trades", fake_fetch)
 
-    out = pos.closed_positions(limit=3, session=None)
+    out = pos.closed_positions(limit=3, offset=0, session=None)
 
     # Must fetch MORE than the display limit (the fix), not just 3.
     assert captured["limit"] >= 100
@@ -39,3 +39,19 @@ def test_closed_positions_returns_newest_first(monkeypatch):
     assert out[0]["exit_ts"].startswith("2026-05-20")   # newest
     assert out[1]["exit_ts"].startswith("2026-05-19")
     assert out[2]["exit_ts"].startswith("2026-05-18")
+
+
+def test_closed_positions_pagination_offset(monkeypatch):
+    """offset pages through the newest-first list ('Load more')."""
+    fake_oldest_first = [_fake_trade(i, 10 + i) for i in range(1, 11)]  # days 11..20
+    monkeypatch.setattr(pos, "fetch_closed_trades", lambda limit=50: fake_oldest_first)
+
+    page1 = pos.closed_positions(limit=3, offset=0, session=None)
+    page2 = pos.closed_positions(limit=3, offset=3, session=None)
+
+    # page1 = newest 3 (days 20,19,18); page2 = next 3 (days 17,16,15); no overlap
+    assert page1[0]["exit_ts"].startswith("2026-05-20")
+    assert page2[0]["exit_ts"].startswith("2026-05-17")
+    p1_ids = {r["id"] for r in page1}
+    p2_ids = {r["id"] for r in page2}
+    assert p1_ids.isdisjoint(p2_ids)

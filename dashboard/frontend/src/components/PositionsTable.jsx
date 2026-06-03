@@ -57,38 +57,79 @@ function sideClass(side) {
 }
 
 const FALLBACK_POLL_MS = 30_000;  // safety poll when WS hasn't delivered yet
+const CLOSED_PAGE = 50;           // closed trades loaded per page
+
+// Merge two trade lists keyed by unique id (Freqtrade trade_id), newest-first.
+// Lets the 30s top-refresh and "Load more" pages combine without duplicates.
+function mergeById(existing, incoming) {
+  const m = new Map();
+  const key = (r) => r.id ?? `${r.coin}-${r.exit_ts}`;
+  for (const r of existing) m.set(key(r), r);
+  for (const r of incoming) m.set(key(r), r);
+  return [...m.values()].sort(
+    (a, b) => String(b.exit_ts || "").localeCompare(String(a.exit_ts || ""))
+  );
+}
 
 export default function PositionsTable({ kind, title, live }) {
+  const isOpen = kind === "open";
   const [rows, setRows] = useState([]);
   const [haveWsData, setHaveWsData] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
 
-  // Drive open positions from the WebSocket live payload when present
+  // OPEN: drive from the WebSocket live payload when present
   useEffect(() => {
-    if (kind !== "open") return;
+    if (!isOpen) return;
     if (live && Array.isArray(live.positions)) {
       setRows(live.positions);
       setHaveWsData(true);
     }
-  }, [kind, live]);
+  }, [isOpen, live]);
 
-  // Fallback polling: closed positions always poll; open positions only poll
-  // while we're waiting for the first WS message (or as a safety net).
+  // OPEN: fallback poll only while waiting for the first WS message
   useEffect(() => {
+    if (!isOpen) return;
     let cancelled = false;
     const load = () => {
-      if (kind === "open" && haveWsData) return;   // WS owns it
-      const p = kind === "open" ? api.positionsOpen() : api.positionsClosed(50);
-      p.then((r) => { if (!cancelled) setRows(r); }).catch(() => {});
+      if (haveWsData) return;
+      api.positionsOpen().then((r) => { if (!cancelled) setRows(r); }).catch(() => {});
     };
     load();
     const id = setInterval(load, FALLBACK_POLL_MS);
     return () => { cancelled = true; clearInterval(id); };
-  }, [kind, haveWsData]);
+  }, [isOpen, haveWsData]);
 
-  const isOpen = kind === "open";
+  // CLOSED: paginated. Initial newest page + 30s refresh of the top page so
+  // new closes appear; "Load more" appends older pages by offset. Dedup-by-id
+  // keeps the top-refresh and load-more pages from colliding.
+  useEffect(() => {
+    if (isOpen) return;
+    let cancelled = false;
+    api.positionsClosed(CLOSED_PAGE, 0).then((r) => {
+      if (cancelled) return;
+      setRows(mergeById([], r));
+      setHasMore(r.length === CLOSED_PAGE);
+    }).catch(() => {});
+    const id = setInterval(() => {
+      api.positionsClosed(CLOSED_PAGE, 0)
+        .then((r) => { if (!cancelled) setRows((prev) => mergeById(prev, r)); })
+        .catch(() => {});
+    }, FALLBACK_POLL_MS);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [isOpen]);
+
+  const loadMore = () => {
+    setLoadingMore(true);
+    api.positionsClosed(CLOSED_PAGE, rows.length).then((r) => {
+      setRows((prev) => mergeById(prev, r));
+      setHasMore(r.length === CLOSED_PAGE);
+    }).catch(() => {}).finally(() => setLoadingMore(false));
+  };
+
   const refreshHint = isOpen
     ? (haveWsData ? "live · 5s" : "polling")
-    : "polling · 30s";
+    : `${rows.length} loaded · 30s`;
 
   return (
     <div className="rounded-xl bg-slate-800 p-4">
@@ -97,9 +138,27 @@ export default function PositionsTable({ kind, title, live }) {
         <div className="text-[10px] uppercase tracking-wider text-slate-500">{refreshHint}</div>
       </div>
 
-      <div className="overflow-x-auto">
+      <div className={isOpen ? "overflow-x-auto" : "overflow-x-auto overflow-y-auto max-h-[560px]"}>
         {isOpen ? <OpenTable rows={rows} /> : <ClosedTable rows={rows} />}
       </div>
+
+      {!isOpen && (
+        <div className="mt-3 flex items-center justify-center gap-3 text-xs">
+          <span className="text-slate-500">{rows.length} closed trades loaded</span>
+          {hasMore ? (
+            <button
+              type="button"
+              onClick={loadMore}
+              disabled={loadingMore}
+              className="px-3 py-1 rounded bg-slate-700 hover:bg-slate-600 text-slate-200 disabled:opacity-50"
+            >
+              {loadingMore ? "Loading…" : "Load more"}
+            </button>
+          ) : (
+            <span className="text-slate-600">— all loaded —</span>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -163,6 +222,7 @@ function ClosedTable({ rows }) {
         <tr>
           <th className="text-left py-1 px-2">Coin</th>
           <th className="text-left py-1 px-2">Side</th>
+          <th className="text-right py-1 px-2">Lev</th>
           <th className="text-left py-1 px-2">Opened</th>
           <th className="text-left py-1 px-2">Closed</th>
           <th className="text-right py-1 px-2">Entry</th>
@@ -178,6 +238,7 @@ function ClosedTable({ rows }) {
           <tr key={r.id ?? `${r.coin}-${r.exit_ts}`} className="border-t border-slate-700">
             <td className="py-1 px-2 font-mono">{r.coin}</td>
             <td className={`py-1 px-2 ${sideClass(r.side)}`}>{r.side}</td>
+            <td className="py-1 px-2 text-right">{r.leverage ?? 1}x</td>
             <td className="py-1 px-2 font-mono text-slate-300 text-xs">{fmtTs(r.entry_ts)}</td>
             <td className="py-1 px-2 font-mono text-slate-300 text-xs">{fmtTs(r.exit_ts)}</td>
             <td className="py-1 px-2 text-right font-mono">{fmtPrice(r.entry_price)}</td>
@@ -191,7 +252,7 @@ function ClosedTable({ rows }) {
           </tr>
         ))}
         {rows.length === 0 && (
-          <tr><td colSpan="10" className="py-3 px-2 text-slate-500 italic">no closed positions</td></tr>
+          <tr><td colSpan="11" className="py-3 px-2 text-slate-500 italic">no closed positions</td></tr>
         )}
       </tbody>
     </table>

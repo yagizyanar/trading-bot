@@ -11,7 +11,7 @@ export const api = {
   status:           () => get("/status/"),
   fearGreed:        () => get("/fear-greed/"),
   positionsOpen:    () => get("/positions/open"),
-  positionsClosed:  (limit = 100) => get(`/positions/closed?limit=${limit}`),
+  positionsClosed:  (limit = 50, offset = 0) => get(`/positions/closed?limit=${limit}&offset=${offset}`),
   sentimentLatest:  () => get("/sentiment/latest"),
   regimeLatest:     () => get("/regime/latest"),
   perfLatest:       () => get("/performance/latest"),

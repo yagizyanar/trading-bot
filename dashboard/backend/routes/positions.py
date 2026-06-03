@@ -50,13 +50,16 @@ _CLOSED_FETCH_ALL = 1000  # covers ~2 months at current rate; bump or paginate b
 
 @router.get("/closed")
 def closed_positions(
-    limit: int = Query(default=100, ge=1, le=1000),
+    limit: int = Query(default=50, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
     session: Session = Depends(db),
 ) -> list[dict]:
-    """Closed trades — prefer Freqtrade live; fall back to the DB.
+    """Closed trades — newest-first, paginated.
 
     Fetches the full closed-trade history (not just `limit`) because Freqtrade
-    returns them oldest-first; sorts newest-first; then slices to `limit`.
+    returns them oldest-first; sorts newest-first; then returns the page
+    [offset : offset+limit]. The frontend pages through with increasing offset
+    ("Load more"); a short page (< limit) signals the end.
     """
     live = fetch_closed_trades(limit=_CLOSED_FETCH_ALL)
     if live is not None:
@@ -64,12 +67,13 @@ def closed_positions(
         out.sort(key=lambda r: r.get("exit_ts") or r.get("entry_ts") or "", reverse=True)
         for r in out:
             r["source"] = "freqtrade"
-        return out[:limit]
+        return out[offset:offset + limit]
 
     rows = (
         session.query(Trade)
         .filter(Trade.outcome.in_(("WIN", "LOSS")))
         .order_by(Trade.exit_ts.desc())
+        .offset(offset)
         .limit(limit)
         .all()
     )
