@@ -27,6 +27,7 @@ from config.settings import (
     WEEKLY_LOSS_STOP_PCT,
 )
 from memory.memory_io import log_circuit_breaker
+from notifications import send_telegram
 from .lockfile import is_locked, write_lockfile
 
 
@@ -108,6 +109,11 @@ def evaluate_circuit_breakers(
         write_lockfile(reason, peak_equity, equity, drawdown_pct)
         if log:
             log_circuit_breaker("LOCKED", reason, equity, "Lockfile written. Manual restart required.")
+            send_telegram(
+                f"🔴 <b>CIRCUIT BREAKER: LOCKED</b>\n{reason}\n"
+                f"Equity ${equity:,.0f} (peak ${peak_equity:,.0f}).\n"
+                f"Trading halted — manual restart required."
+            )
         return CircuitBreakerState(
             level=CircuitBreakerLevel.LOCKED,
             trigger=reason,
@@ -173,6 +179,11 @@ def evaluate_circuit_breakers(
 
     if log:
         log_circuit_breaker(top_level.value, top_reason, equity)
+        send_telegram(
+            f"⚠️ <b>Circuit breaker: {top_level.value}</b>\n{top_reason}\n"
+            f"Equity ${equity:,.0f} | size×{size_multiplier:.2f} | "
+            f"new positions: {'no' if not allow_new else 'yes'}"
+        )
 
     return CircuitBreakerState(
         level=top_level,

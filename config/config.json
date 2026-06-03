@@ -68,36 +68,16 @@
   "pairlists": [
     {"method": "StaticPairList"}
   ],
-  "freqai": {
-    "enabled": true,
-    "purge_old_models": 2,
-    "train_period_days": 180,
-    "backtest_period_days": 7,
-    "live_retrain_hours": 24,
-    "identifier": "freqai_sentiment_v1",
-    "feature_parameters": {
-      "include_timeframes": ["1h", "4h"],
-      "include_corr_pairlist": ["BTC/USDT:USDT", "ETH/USDT:USDT"],
-      "label_period_candles": 24,
-      "include_shifted_candles": 2,
-      "DI_threshold": 0.9,
-      "weight_factor": 0.9,
-      "principal_component_analysis": false,
-      "use_SVM_to_remove_outliers": true,
-      "indicator_periods_candles": [10, 20]
-    },
-    "data_split_parameters": {
-      "test_size": 0.25,
-      "shuffle": false
-    },
-    "model_training_parameters": {
-      "n_estimators": 800,
-      "learning_rate": 0.02,
-      "task_type": "CPU"
-    }
-  },
   "leverage": 1,
   "stoploss": -0.05,
+  "order_types": {
+    "entry": "limit",
+    "exit": "limit",
+    "stoploss": "limit",
+    "stoploss_on_exchange": true,
+    "stoploss_on_exchange_interval": 60,
+    "stoploss_on_exchange_limit_ratio": 0.99
+  },
   "minimal_roi": {"0": 0.15},
   "trailing_stop": true,
   "trailing_stop_positive": 0.02,
@@ -117,7 +97,34 @@
     "process_throttle_secs": 5
   },
   "bot_name": "trade-sentiment-markov",
-  "telegram": {"enabled": false, "token": "disabled", "chat_id": "disabled"},
+  "telegram": {
+    "enabled": false,
+    "token": "",
+    "chat_id": "",
+    "notification_settings": {
+      "status": "on",
+      "warning": "on",
+      "startup": "on",
+      "entry": "on",
+      "entry_fill": "on",
+      "entry_cancel": "on",
+      "exit": {
+        "roi": "on",
+        "stop_loss": "on",
+        "stoploss_on_exchange": "on",
+        "trailing_stop_loss": "on",
+        "exit_signal": "on",
+        "emergency_exit": "on",
+        "force_exit": "on"
+      },
+      "exit_fill": "on",
+      "exit_cancel": "on",
+      "protection_trigger": "on",
+      "protection_trigger_global": "on"
+    },
+    "reload": true,
+    "balance_dust_level": 0.01
+  },
   "api_server": {
     "enabled": true,
     "listen_ip_address": "127.0.0.1",
