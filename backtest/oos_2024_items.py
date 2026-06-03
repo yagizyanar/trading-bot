@@ -194,15 +194,13 @@ def main() -> None:
         base_pos, base_gross = _derive_path(raw, rets, IN_SAMPLE, STOP, "baseline")
         hyst_pos, hyst_gross = _derive_path(raw, rets, IN_SAMPLE, STOP, "hysteresis")
         atr = _atr_pct_series(df).to_numpy()
-        volm = np.clip(np.where(atr > 0, TARGET_DAILY_VOL / np.where(atr > 0, atr, 1), 1.0),
-                       VOL_NORM_MIN, VOL_NORM_MAX)
         beta = _rolling_beta(close, btc_close).to_numpy()
         mom = close.pct_change(20).abs().fillna(0.0).to_numpy()
         idx = close.index
         per[c] = pd.DataFrame({
             "base_pos": base_pos, "base_gross": np.nan_to_num(base_gross),
             "hyst_pos": hyst_pos, "hyst_gross": np.nan_to_num(hyst_gross),
-            "volm": volm, "beta": beta, "mom": mom,
+            "atr": atr, "beta": beta, "mom": mom,
         }, index=idx)
         per[c] = per[c][(per[c].index >= EVAL_START) & (per[c].index <= EVAL_END)]
 
@@ -218,32 +216,46 @@ def main() -> None:
 
     BASE_POS, BASE_GROSS = mat("base_pos", None), mat("base_gross", None)
     HYST_POS, HYST_GROSS = mat("hyst_pos", None), mat("hyst_gross", None)
-    VOLM = mat("volm", None)
+    ATR = mat("atr", None)
     BETA = mat("beta", None)
     MOM = mat("mom", None)
 
-    # Scenario 1: baseline (items OFF) — baseline path, equal 1-slot, no beta cap.
-    s1 = run_portfolio(coins, common, BASE_POS, BASE_GROSS, VOLM, BETA, MOM,
-                       item5=False, item6=False, budget=3.0)
-    # Scenario 2: items 5+6+7, NET_BETA_BUDGET=3.0 (deployed).
-    s2 = run_portfolio(coins, common, HYST_POS, HYST_GROSS, VOLM, BETA, MOM,
-                       item5=True, item6=True, budget=3.0)
-    # Scenario 3: items 5+6+7, NET_BETA_BUDGET=5.0.
-    s3 = run_portfolio(coins, common, HYST_POS, HYST_GROSS, VOLM, BETA, MOM,
-                       item5=True, item6=True, budget=5.0)
+    def volm_for(target_vol: float) -> np.ndarray:
+        """vol_mult matrix for a given TARGET_DAILY_VOL: clip(target/ATR%, MIN, MAX)."""
+        safe = np.where(ATR > 0, ATR, 1.0)
+        v = np.where(ATR > 0, target_vol / safe, 1.0)
+        return np.clip(v, VOL_NORM_MIN, VOL_NORM_MAX)
 
-    print("\n" + "-" * 82)
-    print(f"  {'scenario':<34}{'total ret':>12}{'final $':>11}{'Sharpe':>9}{'maxDD':>9}{'fee $':>9}")
-    print("-" * 82)
-    for name, s in [("1) Baseline (items off)", s1),
-                    ("2) Items 5+6+7, budget=3.0", s2),
-                    ("3) Items 5+6+7, budget=5.0", s3)]:
-        print(f"  {name:<34}{s['total_return']:>+11.1%}{s['final']:>11,.0f}"
-              f"{s['sharpe']:>9.2f}{s['max_dd']:>9.1%}{s['fee']:>9,.0f}")
-    print("-" * 82)
-    print(f"  avg active positions: base {s1['avg_active']:.1f} | items {s2['avg_active']:.1f}")
-    print(f"  beta-capped days: budget3.0 {s2['capped_days']} | budget5.0 {s3['capped_days']} (of {len(common)})")
-    print("=" * 82)
+    ONES = np.ones_like(ATR)
+    baseline = run_portfolio(coins, common, BASE_POS, BASE_GROSS, ONES, BETA, MOM,
+                             item5=False, item6=False, budget=3.0)
+
+    # TARGET_DAILY_VOL sweep (items 5+6+7 active, hysteresis path).
+    sweep = [
+        ("1) tgt=2.0%  budget=3.0  (current/conservative)", 0.020, 3.0),
+        ("2) tgt=3.5%  budget=3.0  (medium)",               0.035, 3.0),
+        ("3) tgt=5.0%  budget=3.0  (aggressive)",           0.050, 3.0),
+        ("4) tgt=5.0%  budget=8.0  (full aggressive)",      0.050, 8.0),
+    ]
+    rows = [("0) BASELINE (items off, reference)", baseline)]
+    detail = []
+    for label, tv, bud in sweep:
+        r = run_portfolio(coins, common, HYST_POS, HYST_GROSS, volm_for(tv), BETA, MOM,
+                          item5=True, item6=True, budget=bud)
+        rows.append((label, r))
+        detail.append((label, r))
+
+    print("\n" + "-" * 92)
+    print(f"  {'scenario':<48}{'total ret':>11}{'final $':>10}{'Sharpe':>8}{'maxDD':>8}{'fee $':>8}")
+    print("-" * 92)
+    for label, r in rows:
+        print(f"  {label:<48}{r['total_return']:>+10.1%}{r['final']:>10,.0f}"
+              f"{r['sharpe']:>8.2f}{r['max_dd']:>8.1%}{r['fee']:>8,.0f}")
+    print("-" * 92)
+    for label, r in detail:
+        print(f"    {label[:12]:<13} avg_active={r['avg_active']:.1f}  "
+              f"beta-capped_days={r['capped_days']}/{len(common)}")
+    print("=" * 92)
 
 
 if __name__ == "__main__":
