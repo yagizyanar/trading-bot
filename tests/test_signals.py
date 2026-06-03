@@ -17,6 +17,9 @@ from signals.technical import TechnicalSnapshot, compute_technical_indicators, t
 from signals.three_layer import (
     BASE_FULL_PCT, BASE_MEDIUM_PCT, BASE_SMALL_PCT,
     SIDEWAYS_SIZE_MULT, TECH_MULT_CONTRADICTS,
+    TARGET_DAILY_VOL, VOL_NORM_MIN, VOL_NORM_MAX,
+    MARKOV_FLIP_THRESHOLD,
+    _vol_normalization_multiplier,
     evaluate_signal,
 )
 
@@ -57,12 +60,12 @@ def test_technical_label_bear_on_overbought_downtrend():
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-def _make_regime(coin="SOL", signal=0.4, regime="Bull"):
+def _make_regime(coin="SOL", signal=0.4, regime="Bull", realized_vol=0.0):
     return RegimeResult(
         coin=coin, timestamp=datetime.now(timezone.utc),
         regime=regime, confidence=0.8,
         bull_prob=0.6, bear_prob=0.2, sideways_prob=0.2,
-        markov_signal=signal, rows_used=500,
+        markov_signal=signal, rows_used=500, realized_vol=realized_vol,
     )
 
 
@@ -299,3 +302,125 @@ def test_short_2x_in_bear_with_strong_negative_sentiment():
         capital=10000.0, cb_multiplier=1.0, cb_allows_new=True,
     )
     assert d.leverage == 2
+
+
+# ---------------------------------------------------------------------------
+# Item 5 — volatility-normalized sizing
+# ---------------------------------------------------------------------------
+def test_vol_normalization_multiplier_math():
+    # scalar = TARGET_DAILY_VOL / realized_vol, clipped to [MIN, MAX]
+    assert _vol_normalization_multiplier(TARGET_DAILY_VOL) == pytest.approx(1.0)       # equal vol
+    assert _vol_normalization_multiplier(0.04) == pytest.approx(0.5)                   # 2x vol → half
+    assert _vol_normalization_multiplier(0.01) == pytest.approx(2.0)                   # half vol → 2x
+    assert _vol_normalization_multiplier(0.005) == pytest.approx(VOL_NORM_MAX)         # clip high
+    assert _vol_normalization_multiplier(0.20) == pytest.approx(VOL_NORM_MIN)          # clip low
+    assert _vol_normalization_multiplier(0.0) == 1.0                                   # unknown → neutral
+    assert _vol_normalization_multiplier(-1.0) == 1.0
+
+
+def test_vol_normalization_shrinks_high_vol_position():
+    # markov 0.6 → 5% base, sentiment/tech ×1.0, Bull regime ×1.0.
+    # realized_vol 4%/day → vol_mult 0.5 → final 2.5%.
+    d = evaluate_signal(
+        "SOL",
+        regime_result=_make_regime(signal=0.6, regime="Bull", realized_vol=0.04),
+        sentiment=_make_sentiment(unified=0.3),
+        technical=_make_tech("BULL"),
+        capital=10000.0, cb_multiplier=1.0, cb_allows_new=True,
+    )
+    assert d.position_size_pct == pytest.approx(BASE_FULL_PCT * 0.5)
+
+
+def test_vol_normalization_grows_low_vol_position_and_clips():
+    # realized_vol 0.5%/day → raw scalar 4.0 → clipped to 2.0 → final 10%.
+    d = evaluate_signal(
+        "SOL",
+        regime_result=_make_regime(signal=0.6, regime="Bull", realized_vol=0.005),
+        sentiment=_make_sentiment(unified=0.3),
+        technical=_make_tech("BULL"),
+        capital=10000.0, cb_multiplier=1.0, cb_allows_new=True,
+    )
+    assert d.position_size_pct == pytest.approx(BASE_FULL_PCT * VOL_NORM_MAX)
+
+
+def test_vol_normalization_absent_is_neutral():
+    # realized_vol unknown (0.0, e.g. degraded regime) → no scaling, base size unchanged.
+    d = evaluate_signal(
+        "SOL",
+        regime_result=_make_regime(signal=0.6, regime="Bull", realized_vol=0.0),
+        sentiment=_make_sentiment(unified=0.3),
+        technical=_make_tech("BULL"),
+        capital=10000.0, cb_multiplier=1.0, cb_allows_new=True,
+    )
+    assert d.position_size_pct == pytest.approx(BASE_FULL_PCT)
+
+
+# ---------------------------------------------------------------------------
+# Item 7 — hysteresis / re-entry band on flips
+# ---------------------------------------------------------------------------
+def test_hysteresis_holds_on_weak_opposite_signal():
+    # Currently LONG; signal flips weakly bearish (-0.2, below flip threshold 0.3)
+    # → SKIP (holds the LONG; SKIP doesn't trigger an exit).
+    d = evaluate_signal(
+        "SOL",
+        regime_result=_make_regime(signal=-0.2, regime="Bear"),
+        sentiment=_make_sentiment(unified=-0.1, label="NEUTRAL"),
+        technical=_make_tech("BEAR", trend_up=False),
+        capital=10000.0, cb_multiplier=1.0, cb_allows_new=True,
+        current_position="LONG",
+    )
+    assert d.decision == "SKIP"
+    assert "hysteresis" in (d.skip_reason or "")
+
+
+def test_hysteresis_allows_strong_flip():
+    # Currently LONG; signal strongly bearish (-0.4 ≥ 0.3) → flip to SHORT.
+    d = evaluate_signal(
+        "SOL",
+        regime_result=_make_regime(signal=-0.4, regime="Bear"),
+        sentiment=_make_sentiment(unified=-0.3, label="BEARISH"),
+        technical=_make_tech("BEAR", trend_up=False),
+        capital=10000.0, cb_multiplier=1.0, cb_allows_new=True,
+        current_position="LONG",
+    )
+    assert d.decision == "SHORT"
+
+
+def test_hysteresis_does_not_block_same_direction():
+    # Currently LONG; signal still bullish → normal LONG (no hysteresis).
+    d = evaluate_signal(
+        "SOL",
+        regime_result=_make_regime(signal=0.4, regime="Bull"),
+        sentiment=_make_sentiment(unified=0.3),
+        technical=_make_tech("BULL"),
+        capital=10000.0, cb_multiplier=1.0, cb_allows_new=True,
+        current_position="LONG",
+    )
+    assert d.decision == "LONG"
+
+
+def test_hysteresis_does_not_block_fresh_entry():
+    # No open position; a weak signal (0.15 > entry gate 0.1) opens normally —
+    # hysteresis only governs FLIPS, not fresh entries.
+    d = evaluate_signal(
+        "SOL",
+        regime_result=_make_regime(signal=0.15, regime="Bull"),
+        sentiment=_make_sentiment(unified=0.3),
+        technical=_make_tech("BULL"),
+        capital=10000.0, cb_multiplier=1.0, cb_allows_new=True,
+        current_position=None,
+    )
+    assert d.decision == "LONG"
+
+
+def test_hysteresis_short_position_weak_bullish_holds():
+    d = evaluate_signal(
+        "SOL",
+        regime_result=_make_regime(signal=0.2, regime="Bull"),
+        sentiment=_make_sentiment(unified=0.1, label="NEUTRAL"),
+        technical=_make_tech("BULL"),
+        capital=10000.0, cb_multiplier=1.0, cb_allows_new=True,
+        current_position="SHORT",
+    )
+    assert d.decision == "SKIP"
+    assert "hysteresis" in (d.skip_reason or "")

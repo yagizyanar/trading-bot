@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from config.settings import TARGET_COINS
+from config.settings import NET_BETA_BUDGET, TARGET_COINS
 from database import SessionLocal, SignalLog
 from markov.multi_coin_runner import persist_regimes, run_all_coins
 from memory.memory_io import (
@@ -21,12 +21,13 @@ from memory.memory_io import (
     append_lesson,
     overwrite_market_context,
 )
+from risk.beta import compute_book_betas
 from risk.circuit_breakers import CircuitBreakerState
-from risk.position_manager import can_open_position
+from risk.position_manager import can_open_position, net_beta_allows
 from sentiment.analyzer import compute_unified_scores
 from sentiment.binance_data import fetch_binance_ohlcv
 from signals.technical import compute_technical_indicators
-from signals.three_layer import SignalDecision, evaluate_signal
+from signals.three_layer import BASE_FULL_PCT, SignalDecision, evaluate_signal
 
 from .base import BaseRoutine
 
@@ -45,8 +46,25 @@ class MarketEvaluationRoutine(BaseRoutine):
 
         sentiments = compute_unified_scores(TARGET_COINS)
 
-        open_coins: set[str] = set(_currently_open_coins())
+        open_positions = _currently_open_positions()
+        open_coins: set[str] = {p["coin"] for p in open_positions}
+        position_dir: dict[str, str] = {p["coin"]: p["direction"] for p in open_positions}
         deployed_pct = 0.0
+
+        # Item 6: aggregate net-BTC-beta cap. Compute each coin's beta and seed
+        # the running net beta from the live book (signed full-position-equivalents
+        # weighted by beta). `betas` defaults coins to 1.0 if data is unavailable.
+        betas = compute_book_betas(TARGET_COINS)
+        equity = portfolio.get("equity") or 1.0
+
+        def _beta_units(coin: str, size_pct: float, direction: str) -> float:
+            sign = 1.0 if direction == "LONG" else -1.0
+            return sign * (size_pct / BASE_FULL_PCT) * betas.get(coin, 1.0)
+
+        net_beta = sum(
+            _beta_units(p["coin"], (p["stake"] / equity if equity > 0 else 0.0), p["direction"])
+            for p in open_positions
+        )
 
         if cb_state.must_close_all:
             append_lesson(
@@ -79,6 +97,7 @@ class MarketEvaluationRoutine(BaseRoutine):
                 capital=portfolio["equity"],
                 cb_multiplier=cb_state.size_multiplier,
                 cb_allows_new=cb_state.allow_new_positions,
+                current_position=position_dir.get(coin),  # Item 7: hysteresis on flips
             )
             raw_decisions.append(decision)
 
@@ -97,6 +116,7 @@ class MarketEvaluationRoutine(BaseRoutine):
 
         decisions: list[SignalDecision] = list(skips_from_signal_layer)
         for decision in trade_candidates:
+            contrib = _beta_units(decision.coin, decision.position_size_pct, decision.decision)
             ok, reason = can_open_position(
                 open_position_count=len(open_coins),
                 deployed_capital_pct=deployed_pct,
@@ -104,6 +124,15 @@ class MarketEvaluationRoutine(BaseRoutine):
                 open_coins=open_coins,
                 allow_new_positions=cb_state.allow_new_positions,
             )
+            # Item 6: net-beta cap — block a trade that would over-concentrate
+            # the book's directional exposure (a same-direction add when already
+            # at the budget). Opposite-direction trades that diversify still pass.
+            if ok and not net_beta_allows(net_beta, contrib, NET_BETA_BUDGET):
+                ok = False
+                reason = (
+                    f"net-beta cap: net {net_beta:+.2f} {contrib:+.2f} would breach "
+                    f"±{NET_BETA_BUDGET:.1f}"
+                )
             if not ok:
                 decision = SignalDecision(
                     coin=decision.coin, decision="SKIP",
@@ -118,6 +147,7 @@ class MarketEvaluationRoutine(BaseRoutine):
             else:
                 open_coins.add(decision.coin)
                 deployed_pct += decision.position_size_pct
+                net_beta += contrib
             decisions.append(decision)
 
         _persist_signal_log(decisions)
@@ -218,6 +248,34 @@ def _currently_open_coins() -> list[str]:
         return [r[0] for r in rows]
     except Exception as exc:  # noqa: BLE001
         log.warning("open-coins lookup failed: %s", exc)
+        return []
+
+
+def _currently_open_positions() -> list[dict]:
+    """[{coin, direction, stake}] for live open positions — for the net-beta seed.
+
+    Same source as _currently_open_coins (Freqtrade /api/v1/status). `direction`
+    is LONG/SHORT from `is_short`; `stake` is the position's stake in quote
+    currency. Returns [] if Freqtrade is unreachable.
+    """
+    try:
+        from dashboard.backend.freqtrade_client import fetch_status
+        live = fetch_status()
+        if not live:
+            return []
+        out: list[dict] = []
+        for t in live:
+            pair = t.get("pair", "")
+            if not pair:
+                continue
+            out.append({
+                "coin": pair.split("/")[0],
+                "direction": "SHORT" if t.get("is_short") else "LONG",
+                "stake": float(t.get("stake_amount") or 0.0),
+            })
+        return out
+    except Exception as exc:  # noqa: BLE001
+        log.warning("open-positions lookup failed: %s", exc)
         return []
 
 

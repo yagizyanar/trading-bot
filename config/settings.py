@@ -122,6 +122,12 @@ MAX_OPEN_POSITIONS: Final[int] = int(_FREQTRADE_CONFIG.get("max_open_trades", 10
 # entries to tiny sizes (the historical 0.14%-stake bug). Realigned 0.75→0.50
 # on 2026-06-03 to match the documented rule + the lowered tradable_balance_ratio.
 MAX_CAPITAL_DEPLOYED_PCT: Final[float] = 0.50
+# Item 6 (2026-06-03): aggregate net-BTC-beta cap. The book's net directional
+# exposure, in full-position-equivalents (position_size / SIGNAL_FULL_PCT)
+# weighted by each coin's beta-to-BTC, may not exceed ±this. 3.0 ≈ "max 3 full
+# positions of net one-way beta" — stops 10 correlated same-direction trades
+# from becoming one giant undiversified bet (the -44% drawdown failure mode).
+NET_BETA_BUDGET: Final[float] = 3.0
 STOP_LOSS_PCT: Final[float] = 0.05
 # +15% take-profit. MUST match config/config.json::minimal_roi[0] (= 0.15):
 # Freqtrade enforces the actual ROI exit, while this constant only drives the

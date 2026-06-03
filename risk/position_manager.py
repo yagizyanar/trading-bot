@@ -44,6 +44,20 @@ def decide_leverage(sentiment_score: float, regime: str) -> int:
     return 1
 
 
+def net_beta_allows(current_net_beta: float, contribution: float, budget: float) -> bool:
+    """Item 6: allow a new position unless it pushes |net beta| past `budget`
+    in the WORSENING direction.
+
+    `current_net_beta` and `contribution` are signed full-position-equivalents
+    weighted by beta-to-BTC (LONG +, SHORT −). A position that REDUCES an
+    already-over-budget imbalance is always allowed (it diversifies the book).
+    """
+    prospective = current_net_beta + contribution
+    if abs(prospective) <= budget:
+        return True
+    return abs(prospective) < abs(current_net_beta)
+
+
 def correlation_check(
     candidate_coin: str,
     open_coins: Iterable[str],

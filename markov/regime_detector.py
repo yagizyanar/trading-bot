@@ -69,6 +69,7 @@ class RegimeResult:
     markov_signal: float      # P(Bull) - P(Bear) | current state
     rows_used: int
     note: Optional[str] = None
+    realized_vol: float = 0.0  # daily ATR% (14d ATR / price) — for vol-normalized sizing
 
 
 _DEFAULT_DEGRADED = RegimeResult(
@@ -104,6 +105,25 @@ def _extreme_regime(close: pd.Series, window: int, threshold: float) -> Optional
     return None
 
 
+def _atr_pct_from_df(df: pd.DataFrame, window: int = 14) -> float:
+    """14-period ATR as a fraction of the latest price — a daily realized-vol
+    proxy for vol-normalized position sizing. Returns 0.0 if data insufficient."""
+    if df is None or len(df) < window + 1:
+        return 0.0
+    if not all(c in df.columns for c in ("high", "low", "close")):
+        return 0.0
+    high = df["high"].astype(float)
+    low = df["low"].astype(float)
+    close = df["close"].astype(float)
+    prev = close.shift(1)
+    tr = pd.concat([(high - low), (high - prev).abs(), (low - prev).abs()], axis=1).max(axis=1)
+    atr = tr.rolling(window).mean().iloc[-1]
+    price = float(close.iloc[-1])
+    if price <= 0 or np.isnan(atr):
+        return 0.0
+    return float(atr / price)
+
+
 def _base_label_name(state_idx: int) -> str:
     if state_idx == 2:
         return "Bull"
@@ -112,8 +132,12 @@ def _base_label_name(state_idx: int) -> str:
     return "Sideways"
 
 
-def detect_regime(close: pd.Series, coin: str) -> RegimeResult:
-    """Compute regime + Markov signal from a Close-price series."""
+def detect_regime(close: pd.Series, coin: str, realized_vol: float = 0.0) -> RegimeResult:
+    """Compute regime + Markov signal from a Close-price series.
+
+    `realized_vol` (daily ATR%, computed upstream from the OHLC df) is carried
+    through to the result for vol-normalized position sizing; degraded paths
+    leave it at 0.0 (sizing then treats it as "unknown" → no scaling)."""
     now = datetime.now(timezone.utc)
     # label_regimes / build_transition_matrix are always non-None now
     # (we fall back to the vendored copy at import time).
@@ -158,6 +182,7 @@ def detect_regime(close: pd.Series, coin: str) -> RegimeResult:
         sideways_prob=side_p,
         markov_signal=markov_signal,
         rows_used=len(close),
+        realized_vol=realized_vol,
     )
 
 
@@ -187,4 +212,4 @@ def compute_regime_for_coin(coin: str, days: int = 365) -> RegimeResult:
             note="binance fetch failed",
         )
     close = df["close"].dropna()
-    return detect_regime(close, coin)
+    return detect_regime(close, coin, realized_vol=_atr_pct_from_df(df))
