@@ -1,6 +1,7 @@
 """Tests for position-sizing, leverage selection, correlation gate."""
 from __future__ import annotations
 
+from config.settings import MAX_LEVERAGE
 from risk.position_manager import (
     can_open_position,
     correlation_check,
@@ -23,8 +24,12 @@ def test_pct_capital_tiers():
 
 
 def test_decide_leverage_requires_both_conditions():
-    assert decide_leverage(0.5, "Bull") == 2
-    assert decide_leverage(0.5, "Neutral") == 2
+    # When both conditions hold (sentiment > threshold AND Bull/Neutral regime),
+    # leverage is the configured ceiling MAX_LEVERAGE; otherwise always 1x.
+    # Asserting against MAX_LEVERAGE (rather than a literal 2) keeps this green
+    # whether the ceiling is 1 (the 2026-06-03 go-live default) or 2.
+    assert decide_leverage(0.5, "Bull") == MAX_LEVERAGE
+    assert decide_leverage(0.5, "Neutral") == MAX_LEVERAGE
     assert decide_leverage(0.25, "Bull") == 1   # sentiment below threshold
     assert decide_leverage(0.5, "Bear") == 1    # wrong regime
     assert decide_leverage(0.5, "Crash") == 1

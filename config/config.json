@@ -1,8 +1,8 @@
 {
-  "max_open_trades": 15,
+  "max_open_trades": 10,
   "stake_currency": "USDT",
   "stake_amount": "unlimited",
-  "tradable_balance_ratio": 0.75,
+  "tradable_balance_ratio": 0.50,
   "fiat_display_currency": "",
   "dry_run": true,
   "dry_run_wallet": 10000,
@@ -96,9 +96,9 @@
       "task_type": "CPU"
     }
   },
-  "leverage": 2,
+  "leverage": 1,
   "stoploss": -0.05,
-  "minimal_roi": {"0": 100},
+  "minimal_roi": {"0": 0.15},
   "trailing_stop": true,
   "trailing_stop_positive": 0.02,
   "trailing_stop_positive_offset": 0.03,

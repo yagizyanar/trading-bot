@@ -199,14 +199,19 @@ class FreqAISentimentStrategy(IStrategy):  # type: ignore[misc,valid-type]
         #   - LONG  in Bull/Euphoria with sentiment > +0.3 → 2x
         #   - SHORT in Bear           with sentiment < -0.3 → 2x
         #   - else → 1x
+        # The result is then capped by settings.MAX_LEVERAGE — the single
+        # authoritative leverage ceiling. Set MAX_LEVERAGE=1 to force 1x
+        # everywhere (e.g. while validating live execution with real money);
+        # _choose_leverage still records its 2x *intent* in signal_log.
         from signals.three_layer import _choose_leverage
+        from config.settings import MAX_LEVERAGE
 
         coin = pair.split("/")[0]
         sent, _, _ = _latest_decision(coin)
         regime = _latest_regime(coin)
         decision = "SHORT" if str(side).lower() == "short" else "LONG"
         lev = _choose_leverage(decision, sent, regime)
-        return float(min(lev, max_leverage))
+        return float(min(lev, max_leverage, MAX_LEVERAGE))
 
     # ------------------------------------------------------------------
     # Helpers

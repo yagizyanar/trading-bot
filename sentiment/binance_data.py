@@ -61,14 +61,22 @@ def fetch_binance_ohlcv(
 def volume_anomaly(df: pd.DataFrame, hours_window: int = 24 * 7) -> Optional[float]:
     """Compute volume anomaly score in [-1.0, +1.0].
 
-    Compares the most recent 1h volume bar to the mean of the prior `hours_window` bars.
+    Compares the most recent *closed* 1h volume bar to the mean of the prior
+    `hours_window` closed bars.
+
+    The final row returned by Binance is the still-forming current candle. Its
+    partial volume reads far below a full hour's average — and at the top of the
+    hour (exactly when sentiment_update / market_evaluation run) it is near-zero,
+    which pinned the score at -1.0 for every coin and destroyed all per-coin
+    differentiation. We therefore drop the in-progress bar (`iloc[-1]`) and use
+    the last closed bar (`iloc[-2]`) as `recent`, excluding it from the baseline.
     """
     if df is None or df.empty or "volume" not in df.columns:
         return None
     if len(df) < hours_window + 2:
         return None
-    recent = float(df["volume"].iloc[-1])
-    baseline = float(df["volume"].iloc[-(hours_window + 1):-1].mean())
+    recent = float(df["volume"].iloc[-2])
+    baseline = float(df["volume"].iloc[-(hours_window + 2):-2].mean())
     if baseline <= 0:
         return None
     spike = recent / baseline

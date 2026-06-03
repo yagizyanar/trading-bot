@@ -58,17 +58,16 @@ def test_run_freqtrade_source_observes_sl(tmp_memory_dir, tmp_lockfile_path, mon
 
 
 def test_run_freqtrade_source_observes_tp(tmp_memory_dir, tmp_lockfile_path, monkeypatch):
-    # TAKE_PROFIT_PCT is currently 1.0 (ROI exit disabled in favour of
-    # trailing-stop-only). Test profit_pct must exceed 100% to still exercise
-    # the alert path. Adjust if TAKE_PROFIT_PCT changes back to a lower value.
+    # TAKE_PROFIT_PCT is 0.15 (+15% ROI exit). profit_pct just past +15%
+    # exercises the TP_NEAR alert path.
     monkeypatch.setattr(
         "dashboard.backend.freqtrade_client.fetch_status",
         lambda: [{
             "pair": "INJ/USDT:USDT",
             "is_short": False,
             "open_rate": 5.0,
-            "current_rate": 11.0,
-            "profit_pct": 110.0,       # +110%, past TP (TAKE_PROFIT_PCT=1.0 = 100%)
+            "current_rate": 5.8,
+            "profit_pct": 16.0,        # +16%, just past TP (TAKE_PROFIT_PCT=0.15 = 15%)
         }],
     )
     monkeypatch.setattr(position_monitor, "_five_min_change", lambda coin: None)

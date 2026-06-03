@@ -197,18 +197,17 @@ def test_map_freqtrade_trade_open_short():
     assert m["current_value_usdt"] == pytest.approx(5.84 * 85.52)
     # SL price comes straight from Freqtrade
     assert m["stop_loss_price"] == 89.82
-    # TAKE_PROFIT_PCT=1.0 in settings (ROI exit disabled). Dashboard now shows
-    # None → "—" instead of a misleading $0 (SHORT) or 2× entry (LONG).
-    assert m["take_profit_price"] is None
+    # TAKE_PROFIT_PCT=0.15 (ROI exit enabled). SHORT TP price = entry × (1 − 0.15).
+    assert m["take_profit_price"] == pytest.approx(85.54 * (1 - 0.15))
     assert m["outcome"] == "OPEN"
     assert m["is_paper"] is True
     assert m["reason_in"] == "freqtrade"
 
 
-def test_map_freqtrade_trade_tp_price_returns_none_when_disabled():
-    # When TAKE_PROFIT_PCT >= 0.99 (current production: 1.0), the dashboard
-    # surfaces None so the UI renders "—" instead of a misleading 2× entry
-    # for LONGs or $0 for SHORTs.
+def test_map_freqtrade_trade_tp_price_enabled():
+    # TAKE_PROFIT_PCT=0.15 (ROI exit enabled): a LONG's TP price is
+    # entry × (1 + 0.15), surfaced for the dashboard TP column.
+    # (The None-when-disabled path is covered by the helper test below.)
     raw = {
         "trade_id": 99, "pair": "INJ/USDT:USDT",
         "is_short": False, "is_open": True,
@@ -217,7 +216,7 @@ def test_map_freqtrade_trade_tp_price_returns_none_when_disabled():
     }
     m = freqtrade_client.map_freqtrade_trade(raw)
     assert m["side"] == "LONG"
-    assert m["take_profit_price"] is None
+    assert m["take_profit_price"] == pytest.approx(5.666 * 1.15)
 
 
 def test_take_profit_price_helper_enabled_and_disabled():

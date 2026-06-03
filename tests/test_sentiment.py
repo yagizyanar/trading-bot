@@ -70,23 +70,36 @@ def test_yfinance_to_signal_monotone():
 
 
 def test_volume_anomaly_spike():
-    # Build 200 hourly bars: baseline volume 100, last bar 250 (>2x baseline)
-    idx = pd.date_range("2024-01-01", periods=200, freq="1h", tz="UTC")
+    # 199 baseline bars @100, a closed "recent" bar @250 (>2x baseline), then a
+    # still-forming in-progress bar that must be ignored (iloc[-1]).
+    idx = pd.date_range("2024-01-01", periods=201, freq="1h", tz="UTC")
     df = pd.DataFrame({
-        "open": [1.0] * 200, "high": [1.0] * 200, "low": [1.0] * 200, "close": [1.0] * 200,
-        "volume": [100.0] * 199 + [250.0],
+        "open": [1.0] * 201, "high": [1.0] * 201, "low": [1.0] * 201, "close": [1.0] * 201,
+        "volume": [100.0] * 199 + [250.0, 5.0],  # iloc[-2]=250 (scored), iloc[-1]=5 (in-progress)
     }, index=idx)
     s = volume_anomaly(df, hours_window=24 * 7)
     assert s == pytest.approx(1.0)
 
 
 def test_volume_anomaly_drying_up():
-    idx = pd.date_range("2024-01-01", periods=200, freq="1h", tz="UTC")
+    idx = pd.date_range("2024-01-01", periods=201, freq="1h", tz="UTC")
     df = pd.DataFrame({
-        "open": [1.0] * 200, "high": [1.0] * 200, "low": [1.0] * 200, "close": [1.0] * 200,
-        "volume": [100.0] * 199 + [40.0],  # below 0.5x baseline
+        "open": [1.0] * 201, "high": [1.0] * 201, "low": [1.0] * 201, "close": [1.0] * 201,
+        "volume": [100.0] * 199 + [40.0, 5.0],  # iloc[-2]=40 (<0.5x baseline), iloc[-1] ignored
     }, index=idx)
     assert volume_anomaly(df, hours_window=24 * 7) == pytest.approx(-1.0)
+
+
+def test_volume_anomaly_ignores_in_progress_bar():
+    # Regression for the -1.0-for-every-coin bug: the final Binance candle is
+    # still forming and has partial volume. Here the last *closed* bar equals
+    # baseline (score ~0) while the in-progress bar is tiny. The old code scored
+    # iloc[-1] and wrongly returned -1.0; the fix must ignore it and return ~0.0.
+    idx = pd.date_range("2024-01-01", periods=201, freq="1h", tz="UTC")
+    df = pd.DataFrame({
+        "volume": [100.0] * 200 + [3.0],  # iloc[-2]=100 (==baseline), iloc[-1]=3 (in-progress)
+    }, index=idx)
+    assert volume_anomaly(df, hours_window=24 * 7) == pytest.approx(0.0)
 
 
 def test_volume_anomaly_returns_none_on_short_series():

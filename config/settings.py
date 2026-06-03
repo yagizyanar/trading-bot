@@ -105,19 +105,30 @@ SECTOR_MAP: Final[dict[str, str]] = {
     "FET": "AI",   "RENDER": "AI",      "TAO": "AI",
 }
 
-MAX_LEVERAGE: Final[int] = 2
+# Authoritative leverage ceiling — capped at the strategy's leverage() callback
+# (strategies/freqai_sentiment_strategy.py). Set to 1 on 2026-06-03 to force 1x
+# for the real-money go-live (handoff §0.6): the edge is ~Sharpe 1, amplifying it
+# just amplifies variance. Raise back to 2 once live execution is validated.
+MAX_LEVERAGE: Final[int] = 1
 # Read directly from config.json::max_open_trades so the internal gate
 # (risk/position_manager.py::can_open_position) and Freqtrade itself can
 # never drift apart. Fallback 10 only kicks in if config.json is missing.
 MAX_OPEN_POSITIONS: Final[int] = int(_FREQTRADE_CONFIG.get("max_open_trades", 10))
-MAX_CAPITAL_DEPLOYED_PCT: Final[float] = 0.75
+# Documented risk rule: "max 50% of total capital in positions at any time."
+# MUST equal config.json::tradable_balance_ratio — the internal gate
+# (can_open_position) and Freqtrade's allocation are measured against the same
+# denominator (total equity), so a higher gate than tradable_balance_ratio lets
+# the bot keep opening past Freqtrade's fundable balance, which clamps new
+# entries to tiny sizes (the historical 0.14%-stake bug). Realigned 0.75→0.50
+# on 2026-06-03 to match the documented rule + the lowered tradable_balance_ratio.
+MAX_CAPITAL_DEPLOYED_PCT: Final[float] = 0.50
 STOP_LOSS_PCT: Final[float] = 0.05
-# Effectively disabled — exit logic is trailing stop + hard stoploss + signal
-# flip only. 1.0 means "TP at 100% profit", which is never reached. Matches
-# config/config.json::minimal_roi[0] = 100 (Freqtrade interprets as 10000%).
-# Dashboard TP-price display and position_monitor TP_NEAR alerts read this
-# constant — keeping them aligned avoids spurious "TP at $X" rendering.
-TAKE_PROFIT_PCT: Final[float] = 1.0
+# +15% take-profit. MUST match config/config.json::minimal_roi[0] (= 0.15):
+# Freqtrade enforces the actual ROI exit, while this constant only drives the
+# dashboard TP-price column and position_monitor TP_NEAR alerts. Keeping them
+# aligned makes the UI/alerts reflect the real exit. Re-enabled 1.0→0.15 on
+# 2026-06-03 alongside minimal_roi.
+TAKE_PROFIT_PCT: Final[float] = 0.15
 
 DAILY_LOSS_HALVE_PCT: Final[float] = 0.02
 DAILY_LOSS_CLOSE_PCT: Final[float] = 0.03
