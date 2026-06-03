@@ -3,7 +3,10 @@
 !.env.example
 .ssh_helper.py
 config/config-secrets.json
+config/config-secrets.json.*
 config/config-prod.json
+# secret-file backups must never be committed
+*.bak
 
 __pycache__/
 *.py[cod]
