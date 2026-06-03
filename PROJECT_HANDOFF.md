@@ -111,7 +111,7 @@ The bot is still `dry_run=true`. Before any real money:
 - `stoploss` = −0.05 (hard), `minimal_roi` = `{"0": 0.15}` (**+15% take-profit RE-ENABLED 2026-06-03** — matches the strategy's own `minimal_roi` attr; coexists with trailing stop + −5% stop + signal flip, whichever fires first), trailing 2% engaging at +3% profit
 - `TAKE_PROFIT_PCT` = 1.0 (settings.py — **still display-only & stale**: drives the dashboard TP column + position_monitor TP_NEAR alerts, NOT the exit. With ROI now at 0.15 the dashboard shows TP as "—" and no TP_NEAR alerts fire. Set to 0.15 to make the UI/alerts reflect the live +15% exit), timeframe = 15m, regime window = 365 days
 
-**Sentiment sources (`sentiment/analyzer.py` weights):** news 0.30 (BROKEN — cryptocurrency.cv returns 0, weight redistributed), volume 0.20, long_short 0.20, funding 0.15, yfinance 0.10 (partial — several coins not on Yahoo), "hyperliquid" 0.05 (now = Binance top-trader ratio).
+**Sentiment sources (`sentiment/analyzer.py` weights):** news 0.30 (**fixed 2026-06-03** — now free no-key RSS feeds via CoinTelegraph/CoinDesk/Decrypt + FinBERT; functional but per-coin coverage is sparse ~2–4/24, missing coins redistribute), volume 0.20, long_short 0.20, funding 0.15, "yfinance" 0.10 (**fixed 2026-06-03** — slot now = CoinGecko 7d % change, batched, **all 24 coins covered**; field name kept for DB stability), "hyperliquid" 0.05 (= Binance top-trader ratio).
 
 **Infra:** 5 services active (freqtrade, backend, nginx, postgres, cron). Cron: pre_market, sentiment_update (2h), market_evaluation (1h), midday_check, day_close, weekly_review, position_monitor (1min), **snapshot_writer (5min, new)**. `dry_run = true`.
 
@@ -171,7 +171,7 @@ Harness: `backtest/daily_walk_forward.py` (daily walk-forward, rolling re-estima
 
 **Key files:** signals/three_layer.py (`_choose_leverage`, `SENTIMENT_2X_THRESHOLD`) · config/settings.py (universe, sectors, risk constants) · config/config.json (Freqtrade: max_open_trades, stoploss, minimal_roi, trailing, tradable_balance_ratio) · risk/position_manager.py (`CORRELATED_SECTOR_LIMIT`, `can_open_position`) · routines/market_evaluation.py (the hourly heart) · backtest/daily_walk_forward.py (edge harness).
 
-**Known non-blocking issues:** news source (cryptocurrency.cv) returns 0 — weight redistributed; yfinance missing for several coins — redistributed; FreqAI present but never validated (treat as off / validate before trusting); closed-table pagination uses numeric offset (rare skip if a trade closes mid-paging — cosmetic).
+**Known non-blocking issues:** news per-coin coverage is sparse (~2–4/24 coins per run — general crypto RSS rarely names niche alts; missing coins redistribute the 0.30 weight; per-coin tag feeds would improve it); FreqAI present but never validated AND not in the decision path (no trained model; predictions never read by entry/exit — treat as off); closed-table pagination uses numeric offset (rare skip if a trade closes mid-paging — cosmetic). (Resolved 2026-06-03: cryptocurrency.cv 402 → RSS; yfinance 8/24 failures → CoinGecko; volume_anomaly −1.0 saturation.)
 
 ---
 End of handoff. Bot alive at http://178.105.141.217/. **Before real money: §0. The edge is real but thin (~Sharpe 1, beta-dependent) — size accordingly.**
