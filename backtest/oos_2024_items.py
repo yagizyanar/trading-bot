@@ -131,9 +131,16 @@ def _rolling_beta(coin_close: pd.Series, btc_close: pd.Series, window=BETA_WINDO
     return beta.shift(1).fillna(1.0)   # causal, neutral default
 
 
-def run_portfolio(coins, common, POS, GROSS, VOLM, BETA, MOM, *, item5, item6, budget):
+def run_portfolio(coins, common, POS, GROSS, VOLM, BETA, MOM, *, item5, item6, budget,
+                  dd_lock=None):
+    """dd_lock: if set (e.g. 0.10), trading HALTS the first day drawdown-from-peak
+    reaches it (the live drawdown circuit breaker locks the bot). Equity is then
+    frozen → total_return is the REALIZED return after the lock. None = no CB."""
     nc, nd = len(coins), len(common)
     eq = START_CAP
+    peak = START_CAP
+    locked = False
+    locked_day = None
     net = np.zeros(nd)
     eq_curve = np.zeros(nd)
     fee_dollars = 0.0
@@ -141,6 +148,10 @@ def run_portfolio(coins, common, POS, GROSS, VOLM, BETA, MOM, *, item5, item6, b
     active_counts = []
     capped_days = 0
     for d in range(nd):
+        if locked:                      # drawdown lock tripped — trading halted, equity frozen
+            eq_curve[d] = eq
+            active_counts.append(0)
+            continue
         active = [i for i in range(nc) if POS[i, d] != 0.0]
         if len(active) > CAP:
             active = sorted(active, key=lambda i: -MOM[i, d])[:CAP]
@@ -163,6 +174,10 @@ def run_portfolio(coins, common, POS, GROSS, VOLM, BETA, MOM, *, item5, item6, b
         eq *= (1.0 + net[d])
         eq_curve[d] = eq
         prev_frac = frac
+        if eq > peak:
+            peak = eq
+        if dd_lock is not None and peak > 0 and (peak - eq) / peak >= dd_lock:
+            locked, locked_day = True, d
     net_s = pd.Series(net)
     sd = net_s.std(ddof=1)
     sharpe = float(net_s.mean() / sd * math.sqrt(365)) if sd > 0 else 0.0
@@ -170,7 +185,8 @@ def run_portfolio(coins, common, POS, GROSS, VOLM, BETA, MOM, *, item5, item6, b
     max_dd = float(((eq_curve - runmax) / runmax).min())
     return dict(total_return=eq / START_CAP - 1.0, final=eq, sharpe=sharpe,
                 max_dd=max_dd, fee=fee_dollars, avg_active=float(np.mean(active_counts)),
-                capped_days=capped_days)
+                capped_days=capped_days, locked=locked, locked_day=locked_day,
+                peak_return=peak / START_CAP - 1.0)
 
 
 def main() -> None:
