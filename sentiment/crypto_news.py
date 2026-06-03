@@ -1,8 +1,10 @@
 """Cryptocurrency news fetcher + FinBERT headline scoring.
 
-Source: cryptocurrency.cv/api/news (free, no key).
+Source: free, no-key crypto-news RSS feeds (CoinTelegraph et al. — see
+config.settings.NEWS_RSS_FEEDS). Replaced cryptocurrency.cv, which went
+paywalled (HTTP 402) in 2026-06.
 Process:
-  1. Fetch latest N headlines (with timestamps).
+  1. Fetch + parse the RSS feeds → latest headlines (with timestamps).
   2. For each headline, run FinBERT (ProsusAI/finbert) → +/-/neutral probs.
   3. Aggregate per coin: mention_count, weighted_score in [-1.0, +1.0].
 
@@ -12,8 +14,10 @@ from __future__ import annotations
 
 import logging
 import re
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from threading import Lock
 from typing import Iterable, Optional
 
@@ -22,7 +26,7 @@ import requests
 from config.settings import (
     API_RETRY_ATTEMPTS,
     API_TIMEOUT_SECONDS,
-    CRYPTO_NEWS_URL,
+    NEWS_RSS_FEEDS,
     TARGET_COINS,
 )
 
@@ -99,37 +103,61 @@ def _parse_ts(value) -> datetime:
     return datetime.now(timezone.utc)
 
 
-def fetch_crypto_news(limit: int = 100) -> list[NewsItem]:
-    """Fetch latest crypto news headlines. Returns [] on failure."""
-    for attempt in range(1, API_RETRY_ATTEMPTS + 1):
+def _parse_rss(xml_text: str) -> list[tuple[str, Optional[str], datetime, str]]:
+    """Parse an RSS 2.0 document → list of (title, link, ts, description).
+
+    Tolerant: a malformed feed yields []. pubDate is RFC-822; missing/unparseable
+    dates fall back to now(UTC).
+    """
+    out: list[tuple[str, Optional[str], datetime, str]] = []
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError as exc:
+        log.warning("RSS parse error: %s", exc)
+        return out
+    for item in root.iter("item"):
+        title = (item.findtext("title") or "").strip()
+        if not title:
+            continue
+        link = item.findtext("link")
+        desc = (item.findtext("description") or "").strip()
+        pub = item.findtext("pubDate")
         try:
-            # cryptocurrency.cv uses perPage (capped) + page for pagination.
-            # `limit` was their old param and now returns 400 for values >50.
-            per_page = min(max(1, limit), 100)
-            resp = requests.get(
-                CRYPTO_NEWS_URL,
-                params={"perPage": per_page, "page": 1},
-                timeout=API_TIMEOUT_SECONDS,
-            )
-            resp.raise_for_status()
-            payload = resp.json()
-            items_raw = (
-                payload if isinstance(payload, list)
-                else payload.get("articles") or payload.get("data") or payload.get("news") or []
-            )
-            result: list[NewsItem] = []
-            for row in items_raw:
-                title = str(row.get("title") or row.get("headline") or "").strip()
-                if not title:
-                    continue
-                ts = _parse_ts(row.get("published_at") or row.get("timestamp") or row.get("date"))
-                url = row.get("url") or row.get("link")
-                coins = _detect_coins(title)
-                result.append(NewsItem(title=title, url=url, ts=ts, coins_mentioned=coins))
-            return result
-        except Exception as exc:  # noqa: BLE001
-            log.warning("crypto_news fetch attempt %s failed: %s", attempt, exc)
-    return []
+            ts = parsedate_to_datetime(pub) if pub else datetime.now(timezone.utc)
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+        except (TypeError, ValueError):
+            ts = datetime.now(timezone.utc)
+        out.append((title, link, ts, desc))
+    return out
+
+
+def fetch_crypto_news(limit: int = 100, feeds: Iterable[str] = NEWS_RSS_FEEDS) -> list[NewsItem]:
+    """Fetch latest crypto news headlines from free RSS feeds. Returns [] on total
+    failure. Each feed is fetched independently — one feed being down/changed does
+    not sink the rest. Headlines are de-duplicated by title and returned newest-first.
+    Coins are detected from title + description for broader per-coin coverage.
+    """
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; trade-bot/1.0 news)"}
+    items: list[NewsItem] = []
+    seen: set[str] = set()
+    for url in feeds:
+        for attempt in range(1, API_RETRY_ATTEMPTS + 1):
+            try:
+                resp = requests.get(url, timeout=API_TIMEOUT_SECONDS, headers=headers)
+                resp.raise_for_status()
+                for title, link, ts, desc in _parse_rss(resp.text):
+                    key = title.lower()
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    coins = _detect_coins(f"{title} {desc}")
+                    items.append(NewsItem(title=title, url=link, ts=ts, coins_mentioned=coins))
+                break  # this feed succeeded; move to the next feed
+            except Exception as exc:  # noqa: BLE001
+                log.warning("news feed %s attempt %s failed: %s", url, attempt, exc)
+    items.sort(key=lambda it: it.ts, reverse=True)
+    return items[:limit] if limit else items
 
 
 def _load_finbert():

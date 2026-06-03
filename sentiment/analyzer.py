@@ -6,11 +6,11 @@ redistributed proportionally to the remaining sources, with extra emphasis
 on news (better per-coin signal) and the futures market data (more direct
 positioning information).
 
-  news (FinBERT on headlines)            : 0.30  per-coin
+  news (FinBERT on RSS headlines)        : 0.30  per-coin
   volume_anomaly (Binance)               : 0.20  per-coin
   long_short_ratio (Binance Futures)     : 0.20  per-coin
   funding_rate (Binance Futures)         : 0.15  per-coin
-  yfinance momentum                      : 0.10  per-coin
+  7d momentum (CoinGecko; was yfinance)  : 0.10  per-coin
   hyperliquid (top traders)              : 0.05  per-coin
   -------------------------------------- : 1.00
   fear_greed                             : MULTIPLIER on the weighted sum
@@ -48,9 +48,9 @@ from .binance_market import (
     fetch_long_short_ratio,
     fetch_top_trader_position_ratio,
 )
+from .coingecko_data import fetch_price_changes_7d
 from .crypto_news import fetch_crypto_news, score_headlines
 from .fear_greed import fetch_fear_greed
-from .yfinance_data import fetch_yf_price_change
 
 log = logging.getLogger(__name__)
 
@@ -127,13 +127,19 @@ def compute_unified_scores(
     news_items = fetch_crypto_news(limit=news_limit)
     news_scores = score_headlines(news_items)
 
+    # 7-day price change for every coin in ONE CoinGecko call (replaces the old
+    # per-coin yfinance fetch, which failed for 8/24 coins). Returns fractions.
+    price_changes = fetch_price_changes_7d(coins)
+
     result: dict[str, UnifiedScore] = {}
     for coin in coins:
         pair = f"{coin}USDT"
         df = fetch_binance_ohlcv(pair, interval="1h", limit=24 * 8 + 2)
         vol_signal = volume_anomaly(df) if df is not None else None
 
-        yf_pct = fetch_yf_price_change(coin, period="7d")
+        # `yfinance_change` slot is now CoinGecko's 7d % change (name kept for
+        # DB-column / weight-key stability — same as the "hyperliquid" slot).
+        yf_pct = price_changes.get(coin)
         yf_signal = _yfinance_to_signal(yf_pct) if yf_pct is not None else None
 
         news_hs = news_scores.get(coin)

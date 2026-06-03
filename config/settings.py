@@ -153,7 +153,18 @@ MARKOV_THRESHOLD: Final[float] = 0.02
 MARKOV_MIN_TRAIN: Final[int] = 252
 
 FEAR_GREED_URL: Final[str] = "https://api.alternative.me/fng/"
-CRYPTO_NEWS_URL: Final[str] = "https://cryptocurrency.cv/api/news"
+# News: cryptocurrency.cv went paywalled (402) 2026-06. Replaced with free,
+# no-key RSS feeds (2026-06-03). CoinTelegraph is the verified-reliable backbone;
+# the others are best-effort and skipped gracefully if a feed is down/changes.
+NEWS_RSS_FEEDS: Final[tuple[str, ...]] = (
+    "https://cointelegraph.com/rss",
+    "https://www.coindesk.com/arc/outboundfeeds/rss/",
+    "https://decrypt.co/feed",
+)
+# CoinGecko replaces flaky yfinance for the 7-day price-change signal (2026-06-03):
+# yfinance failed for 8/24 coins (Yahoo ticker disambiguation, 1000-prefix futures
+# tickers, not-listed). CoinGecko resolves all 24 via stable ids in one batch call.
+COINGECKO_MARKETS_URL: Final[str] = "https://api.coingecko.com/api/v3/coins/markets"
 HYPERLIQUID_URL: Final[str] = "https://api.hyperliquid.xyz/info"
 
 API_TIMEOUT_SECONDS: Final[float] = 15.0

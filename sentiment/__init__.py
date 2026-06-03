@@ -1,6 +1,7 @@
 from .fear_greed import fetch_fear_greed, FearGreedReading  # noqa: F401
 from .crypto_news import fetch_crypto_news, score_headlines, NewsItem  # noqa: F401
-from .yfinance_data import fetch_yf_price_change  # noqa: F401
+from .yfinance_data import fetch_yf_price_change  # noqa: F401  (legacy; analyzer uses CoinGecko)
+from .coingecko_data import fetch_price_changes_7d, fetch_price_change_7d, COINGECKO_IDS  # noqa: F401
 from .binance_data import fetch_binance_ohlcv, volume_anomaly  # noqa: F401
 from .binance_market import (  # noqa: F401
     LongShortReading,

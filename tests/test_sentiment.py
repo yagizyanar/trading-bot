@@ -6,10 +6,41 @@ from datetime import datetime, timezone
 import pandas as pd
 import pytest
 
+from config.settings import TARGET_COINS
 from sentiment.analyzer import UnifiedScore, _blend, _label, _yfinance_to_signal
 from sentiment.binance_data import volume_anomaly
-from sentiment.crypto_news import HeadlineScore, NewsItem, score_headlines, _detect_coins
+from sentiment import crypto_news, coingecko_data
+from sentiment.crypto_news import (
+    HeadlineScore, NewsItem, score_headlines, _detect_coins, _parse_rss, fetch_crypto_news,
+)
+from sentiment.coingecko_data import COINGECKO_IDS, fetch_price_changes_7d
 from sentiment.fear_greed import _classify_to_multiplier
+
+
+class _FakeResp:
+    """Minimal stand-in for requests.Response for mocked-network tests."""
+    def __init__(self, text="", json_data=None, status=200):
+        self.text = text
+        self._json = json_data
+        self.status_code = status
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+    def json(self):
+        return self._json
+
+
+_SAMPLE_RSS = """<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel>
+  <item><title>Solana surges to a new high</title><link>http://x/1</link>
+    <pubDate>Wed, 03 Jun 2026 12:00:00 +0000</pubDate>
+    <description>SOL rallies hard</description></item>
+  <item><title>Chainlink announces upgrade</title><link>http://x/2</link>
+    <pubDate>Wed, 03 Jun 2026 11:00:00 +0000</pubDate>
+    <description>LINK news</description></item>
+</channel></rss>"""
 
 
 def test_fear_greed_multiplier_tiers():
@@ -106,3 +137,78 @@ def test_volume_anomaly_returns_none_on_short_series():
     idx = pd.date_range("2024-01-01", periods=10, freq="1h", tz="UTC")
     df = pd.DataFrame({"volume": [100.0] * 10}, index=idx)
     assert volume_anomaly(df) is None
+
+
+# --- news: RSS parsing (replaces paywalled cryptocurrency.cv) ---------------
+
+def test_parse_rss_extracts_items():
+    rows = _parse_rss(_SAMPLE_RSS)
+    assert len(rows) == 2
+    title, link, ts, desc = rows[0]
+    assert title == "Solana surges to a new high"
+    assert link == "http://x/1"
+    assert ts.tzinfo is not None              # tz-aware
+    assert ts.year == 2026 and ts.month == 6
+    assert "rallies" in desc
+
+
+def test_parse_rss_malformed_returns_empty():
+    assert _parse_rss("<not xml") == []
+
+
+def test_fetch_crypto_news_from_rss(monkeypatch):
+    monkeypatch.setattr(crypto_news.requests, "get",
+                        lambda *a, **k: _FakeResp(text=_SAMPLE_RSS))
+    items = fetch_crypto_news(feeds=["http://fake/rss"])
+    assert len(items) == 2
+    by_title = {it.title: it for it in items}
+    assert "SOL" in by_title["Solana surges to a new high"].coins_mentioned
+    assert "LINK" in by_title["Chainlink announces upgrade"].coins_mentioned
+    # newest-first ordering
+    assert items[0].ts >= items[1].ts
+
+
+def test_fetch_crypto_news_dedups_across_feeds(monkeypatch):
+    monkeypatch.setattr(crypto_news.requests, "get",
+                        lambda *a, **k: _FakeResp(text=_SAMPLE_RSS))
+    items = fetch_crypto_news(feeds=["http://a/rss", "http://b/rss"])  # same content twice
+    assert len(items) == 2                    # de-duplicated by title
+
+
+def test_fetch_crypto_news_one_bad_feed_doesnt_sink_others(monkeypatch):
+    def fake_get(url, *a, **k):
+        if "bad" in url:
+            raise RuntimeError("boom")
+        return _FakeResp(text=_SAMPLE_RSS)
+    monkeypatch.setattr(crypto_news.requests, "get", fake_get)
+    items = fetch_crypto_news(feeds=["http://bad/rss", "http://good/rss"])
+    assert len(items) == 2                    # good feed still parsed
+
+
+# --- price change: CoinGecko (replaces yfinance for the 8 failing coins) ----
+
+def test_coingecko_ids_cover_all_target_coins():
+    missing = [c for c in TARGET_COINS if c not in COINGECKO_IDS]
+    assert missing == [], f"TARGET_COINS missing a CoinGecko id: {missing}"
+
+
+def test_coingecko_price_changes_parsing(monkeypatch):
+    payload = [
+        {"id": "solana", "price_change_percentage_7d_in_currency": -10.92},
+        {"id": "bonk", "price_change_percentage_7d_in_currency": -11.73},
+        {"id": "aptos", "price_change_percentage_7d_in_currency": None},  # resolved but no 7d
+    ]
+    monkeypatch.setattr(coingecko_data.requests, "get",
+                        lambda *a, **k: _FakeResp(json_data=payload))
+    out = fetch_price_changes_7d(["SOL", "1000BONK", "APT"])
+    # percent -> fraction, and 1000BONK maps back from the 'bonk' id
+    assert out["SOL"] == pytest.approx(-0.1092)
+    assert out["1000BONK"] == pytest.approx(-0.1173)
+    assert "APT" not in out                   # None 7d value is dropped
+
+
+def test_coingecko_empty_on_request_failure(monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("network down")
+    monkeypatch.setattr(coingecko_data.requests, "get", boom)
+    assert fetch_price_changes_7d(["SOL"]) == {}
