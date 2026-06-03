@@ -308,22 +308,24 @@ def test_short_2x_in_bear_with_strong_negative_sentiment():
 # Item 5 — volatility-normalized sizing
 # ---------------------------------------------------------------------------
 def test_vol_normalization_multiplier_math():
-    # scalar = TARGET_DAILY_VOL / realized_vol, clipped to [MIN, MAX]
-    assert _vol_normalization_multiplier(TARGET_DAILY_VOL) == pytest.approx(1.0)       # equal vol
-    assert _vol_normalization_multiplier(0.04) == pytest.approx(0.5)                   # 2x vol → half
-    assert _vol_normalization_multiplier(0.01) == pytest.approx(2.0)                   # half vol → 2x
-    assert _vol_normalization_multiplier(0.005) == pytest.approx(VOL_NORM_MAX)         # clip high
-    assert _vol_normalization_multiplier(0.20) == pytest.approx(VOL_NORM_MIN)          # clip low
-    assert _vol_normalization_multiplier(0.0) == 1.0                                   # unknown → neutral
+    # scalar = TARGET_DAILY_VOL / realized_vol, clipped to [MIN, MAX].
+    # Inputs are expressed relative to TARGET_DAILY_VOL so the test is robust to
+    # tuning the constant.
+    assert _vol_normalization_multiplier(TARGET_DAILY_VOL) == pytest.approx(1.0)            # equal vol
+    assert _vol_normalization_multiplier(2 * TARGET_DAILY_VOL) == pytest.approx(0.5)        # 2x vol → half
+    assert _vol_normalization_multiplier(TARGET_DAILY_VOL / 1.5) == pytest.approx(1.5)      # lower vol → bigger
+    assert _vol_normalization_multiplier(TARGET_DAILY_VOL / 10) == pytest.approx(VOL_NORM_MAX)  # clip high
+    assert _vol_normalization_multiplier(TARGET_DAILY_VOL * 10) == pytest.approx(VOL_NORM_MIN)  # clip low
+    assert _vol_normalization_multiplier(0.0) == 1.0                                       # unknown → neutral
     assert _vol_normalization_multiplier(-1.0) == 1.0
 
 
 def test_vol_normalization_shrinks_high_vol_position():
     # markov 0.6 → 5% base, sentiment/tech ×1.0, Bull regime ×1.0.
-    # realized_vol 4%/day → vol_mult 0.5 → final 2.5%.
+    # realized_vol = 2× target → vol_mult 0.5 → final 2.5% (robust to the constant).
     d = evaluate_signal(
         "SOL",
-        regime_result=_make_regime(signal=0.6, regime="Bull", realized_vol=0.04),
+        regime_result=_make_regime(signal=0.6, regime="Bull", realized_vol=2 * TARGET_DAILY_VOL),
         sentiment=_make_sentiment(unified=0.3),
         technical=_make_tech("BULL"),
         capital=10000.0, cb_multiplier=1.0, cb_allows_new=True,
@@ -332,10 +334,10 @@ def test_vol_normalization_shrinks_high_vol_position():
 
 
 def test_vol_normalization_grows_low_vol_position_and_clips():
-    # realized_vol 0.5%/day → raw scalar 4.0 → clipped to 2.0 → final 10%.
+    # realized_vol = target/10 → raw scalar 10 → clipped to VOL_NORM_MAX (2.0) → final 10%.
     d = evaluate_signal(
         "SOL",
-        regime_result=_make_regime(signal=0.6, regime="Bull", realized_vol=0.005),
+        regime_result=_make_regime(signal=0.6, regime="Bull", realized_vol=TARGET_DAILY_VOL / 10),
         sentiment=_make_sentiment(unified=0.3),
         technical=_make_tech("BULL"),
         capital=10000.0, cb_multiplier=1.0, cb_allows_new=True,

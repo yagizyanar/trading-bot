@@ -76,7 +76,11 @@ SIDEWAYS_SIZE_MULT    = 0.5
 # scalar = TARGET_DAILY_VOL / realized_daily_vol(ATR%), clipped to bounds so
 # no single position becomes negligible or oversized. A 5% slug of a low-vol
 # major can grow up to 2×; a high-vol memecoin shrinks toward 0.25×.
-TARGET_DAILY_VOL = 0.02   # 2%/day target risk per position (tunable)
+TARGET_DAILY_VOL = 0.035  # 3.5%/day target risk per position. Raised 0.02→0.035 for
+                          # go-live (2026-06-03) per the 2024-OOS frontier sweep:
+                          # ~50% more return at the SAME ~−13% max DD (drawdown is
+                          # anchored by NET_BETA_BUDGET=3.0, not by this). Lower this
+                          # toward 0.02 for a more conservative book; ~0.05 = aggressive.
 VOL_NORM_MIN     = 0.25
 VOL_NORM_MAX     = 2.0
 
