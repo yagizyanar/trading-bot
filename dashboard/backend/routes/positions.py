@@ -41,17 +41,26 @@ def open_positions(session: Session = Depends(db)) -> list[dict]:
     return [{**_serialize(r), "source": "snapshot"} for r in rows]
 
 
+# Freqtrade's /api/v1/trades returns OLDEST-first. Fetching only `limit` rows
+# therefore EXCLUDES the newest trades once total closed > limit (which is why
+# the dashboard table silently stopped showing recent trades after ~50-100
+# closes). Fetch the full history, sort newest-first, then slice for display.
+_CLOSED_FETCH_ALL = 1000  # covers ~2 months at current rate; bump or paginate beyond
+
+
 @router.get("/closed")
 def closed_positions(
     limit: int = Query(default=100, ge=1, le=1000),
     session: Session = Depends(db),
 ) -> list[dict]:
-    """Closed trades — prefer Freqtrade live; fall back to the DB."""
-    live = fetch_closed_trades(limit=limit)
+    """Closed trades — prefer Freqtrade live; fall back to the DB.
+
+    Fetches the full closed-trade history (not just `limit`) because Freqtrade
+    returns them oldest-first; sorts newest-first; then slices to `limit`.
+    """
+    live = fetch_closed_trades(limit=_CLOSED_FETCH_ALL)
     if live is not None:
         out = [map_freqtrade_trade(t) for t in live]
-        # Closed trades come newest first from /api/v1/trades; preserve that
-        # ordering, but enforce it explicitly in case of unexpected payloads.
         out.sort(key=lambda r: r.get("exit_ts") or r.get("entry_ts") or "", reverse=True)
         for r in out:
             r["source"] = "freqtrade"

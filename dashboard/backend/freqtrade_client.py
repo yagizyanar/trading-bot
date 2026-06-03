@@ -86,7 +86,7 @@ def fetch_closed_trades(limit: int = 50) -> Optional[list]:
 
     Freqtrade wraps the array in {"trades": [...], "trades_count": N, ...}.
     """
-    limit = max(1, min(int(limit), 500))
+    limit = max(1, min(int(limit), 1000))
     data = _cached_get(f"/api/v1/trades?limit={limit}")
     if not isinstance(data, dict):
         return None
