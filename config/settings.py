@@ -141,7 +141,13 @@ DAILY_LOSS_CLOSE_PCT: Final[float] = 0.03
 DAILY_LOSS_PAUSE_PCT: Final[float] = 0.05
 WEEKLY_LOSS_REDUCE_PCT: Final[float] = 0.05
 WEEKLY_LOSS_STOP_PCT: Final[float] = 0.08
-DRAWDOWN_LOCK_PCT: Final[float] = 0.10
+# Drawdown-from-peak lock: writes TRADING_LOCKED.txt (halts, manual restart).
+# Raised 0.10→0.20 on 2026-06-03: with items 5-7 holding the book's natural
+# drawdown to ~13% (Config 3), a 10% lock tripped during NORMAL operation in
+# volatile years and froze realized return well below potential (2024: +39% vs
+# +90%). 20% sits above the strategy's normal DD so the lock is a true
+# catastrophe backstop, not an everyday tripwire. (Multi-year OOS analysis.)
+DRAWDOWN_LOCK_PCT: Final[float] = 0.20
 
 SIGNAL_FULL_SIZE: Final[float] = 0.50
 SIGNAL_MEDIUM_SIZE: Final[float] = 0.30
