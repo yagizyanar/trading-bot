@@ -40,11 +40,18 @@ class FreqAISentimentStrategy(IStrategy):  # type: ignore[misc,valid-type]
     timeframe = "1h"
     can_short = True
     stoploss = -0.05
-    trailing_stop = False
+    # Trailing TP widened 2026-06-04 (2%/+3% -> 8%/+10%) after live evidence: the
+    # old 2% trail caused 63% of exits and capped winners at +2.4% avg (only 4
+    # trades ever >+8%), amputating the 20-day-momentum fat tail. minimal_roi
+    # disabled (was +15%, fired 2x ever) so the wide trail manages the upside.
+    trailing_stop = True
+    trailing_stop_positive = 0.08
+    trailing_stop_positive_offset = 0.10
+    trailing_only_offset_is_reached = True
     process_only_new_candles = True
     use_exit_signal = True
     exit_profit_only = False
-    minimal_roi = {"0": 0.15}
+    minimal_roi = {"0": 10}
     startup_candle_count: int = 200
 
     plot_config = {

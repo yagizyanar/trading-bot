@@ -40,7 +40,6 @@
     "pair_whitelist": [
       "SOL/USDT:USDT",
       "AVAX/USDT:USDT",
-      "LINK/USDT:USDT",
       "DOT/USDT:USDT",
       "POL/USDT:USDT",
       "INJ/USDT:USDT",
@@ -78,10 +77,10 @@
     "stoploss_on_exchange_interval": 60,
     "stoploss_on_exchange_limit_ratio": 0.99
   },
-  "minimal_roi": {"0": 0.15},
+  "minimal_roi": {"0": 10},
   "trailing_stop": true,
-  "trailing_stop_positive": 0.02,
-  "trailing_stop_positive_offset": 0.03,
+  "trailing_stop_positive": 0.08,
+  "trailing_stop_positive_offset": 0.10,
   "trailing_only_offset_is_reached": true,
   "use_exit_signal": true,
   "exit_profit_only": false,

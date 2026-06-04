@@ -72,7 +72,10 @@ TARGET_COINS: Final[tuple[str, ...]] = (
     # MATIC → POL (Polygon rebrand, 2024) and FTM → S (Sonic rebrand, 2024/25).
     # Binance Futures discontinued the old tickers; the new symbols below are
     # the active perpetual pairs.
-    "SOL", "AVAX", "LINK", "DOT", "POL", "INJ", "ARB", "OP", "APT", "SUI",
+    # LINK dropped 2026-06-04: its $20 Binance min-notional vs a $15 max stake
+    # at $300 forced every LINK trade to ~7% (2x intended) or rejection. Re-add
+    # when the account is >= ~$700 (see project_tier1_findings_2026-06-04).
+    "SOL", "AVAX", "DOT", "POL", "INJ", "ARB", "OP", "APT", "SUI",
     "NEAR", "S", "ATOM", "SAND", "MANA", "AXS", "DYDX", "GMX",
     # MEME sector (added 2026-05-28). BONK and PEPE perpetuals are
     # 1000x-scaled on Binance — the contract symbols are 1000BONKUSDT and
@@ -96,7 +99,6 @@ SECTOR_MAP: Final[dict[str, str]] = {
     # BTC dominance + ETH beta; alts trade more on idiosyncratic narratives.
     "SOL": "L1-MAJOR", "AVAX": "L1-MAJOR", "NEAR": "L1-MAJOR", "DOT": "L1-MAJOR",
     "APT": "L1-ALT",   "SUI": "L1-ALT",   "ATOM": "L1-ALT",   "S": "L1-ALT",
-    "LINK": "ORACLE",
     "INJ": "DEFI", "DYDX": "DEFI", "GMX": "DEFI",
     "SAND": "GAMING", "MANA": "GAMING", "AXS": "GAMING",
     # MEME and AI sectors added 2026-05-28. Cap stays at 2 per sector via

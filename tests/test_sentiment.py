@@ -37,9 +37,9 @@ _SAMPLE_RSS = """<?xml version="1.0" encoding="UTF-8"?>
   <item><title>Solana surges to a new high</title><link>http://x/1</link>
     <pubDate>Wed, 03 Jun 2026 12:00:00 +0000</pubDate>
     <description>SOL rallies hard</description></item>
-  <item><title>Chainlink announces upgrade</title><link>http://x/2</link>
+  <item><title>Avalanche announces upgrade</title><link>http://x/2</link>
     <pubDate>Wed, 03 Jun 2026 11:00:00 +0000</pubDate>
-    <description>LINK news</description></item>
+    <description>AVAX news</description></item>
 </channel></rss>"""
 
 
@@ -69,10 +69,10 @@ def test_score_headlines_aggregates_per_coin():
     items = [
         NewsItem("Solana rally to ATH", None, datetime.now(timezone.utc), ("SOL",)),
         NewsItem("Solana crashes 15%", None, datetime.now(timezone.utc), ("SOL",)),
-        NewsItem("LINK breakout incoming", None, datetime.now(timezone.utc), ("LINK",)),
+        NewsItem("AVAX breakout incoming", None, datetime.now(timezone.utc), ("AVAX",)),
     ]
     scores = score_headlines(items)
-    assert "SOL" in scores and "LINK" in scores
+    assert "SOL" in scores and "AVAX" in scores
     assert isinstance(scores["SOL"], HeadlineScore)
     assert scores["SOL"].mention_count == 2
 
@@ -163,7 +163,7 @@ def test_fetch_crypto_news_from_rss(monkeypatch):
     assert len(items) == 2
     by_title = {it.title: it for it in items}
     assert "SOL" in by_title["Solana surges to a new high"].coins_mentioned
-    assert "LINK" in by_title["Chainlink announces upgrade"].coins_mentioned
+    assert "AVAX" in by_title["Avalanche announces upgrade"].coins_mentioned
     # newest-first ordering
     assert items[0].ts >= items[1].ts
 
