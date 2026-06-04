@@ -90,11 +90,13 @@ def _raw_signals(close: pd.Series, in_sample: int) -> np.ndarray:
     return raw
 
 
-def _derive_path(raw, rets, in_sample, stop, mode):
+def _derive_path(raw, rets, in_sample, stop, mode, conf=None, conf_thresh=None):
     """From raw signals → (positions, gross) applying the -5% stop.
 
     mode='baseline': enter/flip/exit on |s|>ENTRY_GATE, flat in the dead-zone.
     mode='hysteresis': flip only if |s|≥FLIP; hold through dead-zone / weak opposite.
+    conf/conf_thresh (optional): when regime confidence < conf_thresh, the signal
+    is ignored (hold current position) — for the confidence-gate experiment.
     """
     n = len(raw)
     positions = np.zeros(n)
@@ -109,16 +111,19 @@ def _derive_path(raw, rets, in_sample, stop, mode):
         gross[t] = rets[t] * pos
         positions[t] = pos
         s = raw[t]
-        desired = 1.0 if s > ENTRY_GATE else (-1.0 if s < -ENTRY_GATE else 0.0)
-        if mode == "baseline":
-            target = desired
-        else:  # hysteresis
-            if pos == 0.0:
+        if conf is not None and conf_thresh is not None and conf[t] < conf_thresh:
+            target = pos                                       # low confidence → skip signal, hold
+        else:
+            desired = 1.0 if s > ENTRY_GATE else (-1.0 if s < -ENTRY_GATE else 0.0)
+            if mode == "baseline":
                 target = desired
-            elif desired != 0.0 and desired != pos:
-                target = desired if abs(s) >= FLIP else pos   # flip only if strong
-            else:
-                target = pos                                   # same dir / dead-zone → hold
+            else:  # hysteresis
+                if pos == 0.0:
+                    target = desired
+                elif desired != 0.0 and desired != pos:
+                    target = desired if abs(s) >= FLIP else pos   # flip only if strong
+                else:
+                    target = pos                                   # same dir / dead-zone → hold
         pos = target
     return positions, gross
 
@@ -188,7 +193,7 @@ def run_portfolio(coins, common, POS, GROSS, VOLM, BETA, MOM, *, item5, item6, b
     runmax = np.maximum.accumulate(eq_curve)
     max_dd = float(((eq_curve - runmax) / runmax).min())
     return dict(total_return=eq / START_CAP - 1.0, final=eq, sharpe=sharpe,
-                sharpe_active=sharpe_active,
+                sharpe_active=sharpe_active, net=net,
                 max_dd=max_dd, fee=fee_dollars, avg_active=float(np.mean(active_counts)),
                 capped_days=capped_days, locked=locked, locked_day=locked_day,
                 peak_return=peak / START_CAP - 1.0)
