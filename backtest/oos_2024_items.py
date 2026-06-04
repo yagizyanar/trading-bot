@@ -159,7 +159,11 @@ def run_portfolio(coins, common, POS, GROSS, VOLM, BETA, MOM, *, item5, item6, b
             continue
         active = [i for i in range(nc) if POS[i, d] != 0.0]
         if len(active) > CAP:
-            active = sorted(active, key=lambda i: -MOM[i, d])[:CAP]
+            # LOOK-AHEAD FIX (2026-06-04): select on PRIOR-day momentum. Using MOM[i,d]
+            # (same-day close) systematically dropped coins on their bad days and
+            # inflated 2024 by ~40pp / 1.2 Sharpe (see project_runportfolio_lookahead).
+            md = d - 1 if d > 0 else d
+            active = sorted(active, key=lambda i: -MOM[i, md])[:CAP]
         active_counts.append(len(active))
         slots = {i: (VOLM[i, d] if item5 else 1.0) for i in active}
         net_beta = sum(np.sign(POS[i, d]) * slots[i] * BETA[i, d] for i in active)
