@@ -181,9 +181,14 @@ def run_portfolio(coins, common, POS, GROSS, VOLM, BETA, MOM, *, item5, item6, b
     net_s = pd.Series(net)
     sd = net_s.std(ddof=1)
     sharpe = float(net_s.mean() / sd * math.sqrt(365)) if sd > 0 else 0.0
+    # Sharpe over the actively-traded window only (exclude post-lock frozen days).
+    act = net[:locked_day + 1] if locked else net
+    sda = float(np.std(act, ddof=1)) if len(act) > 1 else 0.0
+    sharpe_active = float(np.mean(act) / sda * math.sqrt(365)) if sda > 0 else sharpe
     runmax = np.maximum.accumulate(eq_curve)
     max_dd = float(((eq_curve - runmax) / runmax).min())
     return dict(total_return=eq / START_CAP - 1.0, final=eq, sharpe=sharpe,
+                sharpe_active=sharpe_active,
                 max_dd=max_dd, fee=fee_dollars, avg_active=float(np.mean(active_counts)),
                 capped_days=capped_days, locked=locked, locked_day=locked_day,
                 peak_return=peak / START_CAP - 1.0)
