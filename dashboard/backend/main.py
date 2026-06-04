@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config.settings import LOG_LEVEL
 
-from .routes import positions, sentiment, regime, performance, status, memory, fear_greed, market, alerts
+from .routes import positions, sentiment, regime, performance, status, memory, fear_greed, market, alerts, drift
 from .ws import register_ws
 
 logging.basicConfig(
@@ -39,6 +39,7 @@ app.include_router(memory.router, prefix="/api/memory", tags=["memory"])
 app.include_router(fear_greed.router, prefix="/api/fear-greed", tags=["fear-greed"])
 app.include_router(market.router, prefix="/api/market", tags=["market"])
 app.include_router(alerts.router, prefix="/api/alerts", tags=["alerts"])
+app.include_router(drift.router, prefix="/api/drift", tags=["drift"])
 
 register_ws(app)
 

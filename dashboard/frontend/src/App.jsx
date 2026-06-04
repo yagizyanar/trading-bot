@@ -12,6 +12,7 @@ import LongShortGrid from "./components/LongShortGrid.jsx";
 import FundingRateGrid from "./components/FundingRateGrid.jsx";
 import HyperliquidSentiment from "./components/HyperliquidSentiment.jsx";
 import SystemAlerts from "./components/SystemAlerts.jsx";
+import DriftMonitor from "./components/DriftMonitor.jsx";
 import { openWebsocket } from "./api/client.js";
 
 export default function App() {
@@ -35,6 +36,10 @@ export default function App() {
 
       <section>
         <SystemAlerts live={live} />
+      </section>
+
+      <section>
+        <DriftMonitor />
       </section>
 
       <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">

@@ -7,5 +7,6 @@ from .models import (  # noqa: F401
     SignalLog,
     CircuitBreakerEvent,
     PerformanceSnapshot,
+    DriftSnapshot,
 )
 from .migrations import init_db, upgrade  # noqa: F401

@@ -134,6 +134,26 @@ class CircuitBreakerEvent(Base):
     __table_args__ = (Index("ix_cb_ts", "ts"),)
 
 
+class DriftSnapshot(Base):
+    """Daily live-vs-backtest drift metrics (roadmap item 8). Written by
+    routines.drift_monitor, read by the dashboard."""
+    __tablename__ = "drift_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    window_days: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
+    trades_30d: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    rolling_sharpe_30d: Mapped[Optional[float]] = mapped_column(Float)
+    win_rate_30d: Mapped[Optional[float]] = mapped_column(Float)
+    avg_profit_per_trade_30d: Mapped[Optional[float]] = mapped_column(Float)
+    actual_cost_bps: Mapped[Optional[float]] = mapped_column(Float)
+    expected_cost_bps: Mapped[Optional[float]] = mapped_column(Float)
+    consecutive_negative_days: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    alerts: Mapped[Optional[str]] = mapped_column(Text)
+
+    __table_args__ = (Index("ix_drift_ts", "ts"),)
+
+
 class PerformanceSnapshot(Base):
     __tablename__ = "performance_snapshots"
 

@@ -23,6 +23,8 @@ export const api = {
   hyperliquid:      () => get("/market/hyperliquid"),
   marketSummary:    () => get("/market/summary"),
   alerts:           () => get("/alerts/"),
+  drift:            () => get("/drift/latest"),
+  driftHistory:     (days = 30) => get(`/drift/history?days=${days}`),
 };
 
 export function openWebsocket(onMessage) {
