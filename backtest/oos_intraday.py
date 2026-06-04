@@ -1,30 +1,26 @@
-"""15-minute intraday execution harness (roadmap item 9).
+"""15-minute intraday execution harness (roadmap item 9), multi-year.
 
-The daily harness checks exits only at the daily close, so it CANNOT see the live
-exit mechanics — the -5% stop, the 8%/+10% trailing stop, intraday wicks. This
-replays the SAME daily Markov signal on real 15m FUTURES bars with the deployed
-exit stack, resolving the intraday sequence (which level was hit first), then
-compares to the daily-close model on the identical data/signal/coins.
+Replays the daily Markov signal on real 15m FUTURES bars with the deployed exit
+stack, resolving intraday sequence — the only harness that can test live exit
+mechanics. Now models the 1-day post-stop cooldown (StoplossGuard) and runs
+2022/2023/2024.
 
 Live config replicated (config.json):
-  stop -5% from entry · trailing 8% activating at +10% profit · no flat TP
-  fee 0.05%/side · funding applied at the 8h marks (00:00/08:00/16:00 UTC)
+  stop -5% from entry · trailing 8% activating at +10% · no flat TP
+  fee 0.05%/side · funding at the 8h marks · 1-day (96-bar) cooldown after a
+  HARD STOP (matches StoplossGuard: re-entry blocked for 24h after a losing stop;
+  flips and winning trailing exits unaffected — trailing only fires in profit).
 
-Signal: daily Markov (20d) + hysteresis, computed on daily closes (causal),
-executed on 15m bars. After a stop/trailing exit, no same-day re-entry (≈ a 1-day
-cooldown; live Freqtrade has no CooldownPeriod protection, so it could re-enter
-sooner — flagged as a finding). Universe = 13-coin clean set. Primary year 2024.
-
-Reports per book (15m vs daily-close): return, Sharpe, maxDD, avg trade duration,
-fee+funding drag, and the exit-reason mix (trailing vs hard stop vs signal flip).
+Books reported per year (equal-weight): signal-only (no stops), daily-close
+(the daily harness), 15m no-cooldown, 15m + 1-day cooldown (DEPLOYED). Universe =
+13-coin clean set. NOTE: absolute returns are EQUAL-WEIGHT, not the deployed sized
+book (whose 2024 headline was a look-ahead artifact — see project_runportfolio_lookahead).
 """
 from __future__ import annotations
 
 import math
-import os
 import pickle
 from collections import Counter
-from datetime import date as _date, timezone
 
 import numpy as np
 import pandas as pd
@@ -38,21 +34,21 @@ FLIP = 0.3
 STOP_PCT = 0.05
 TRAIL_PCT = 0.08
 TRAIL_ACTIVATE = 0.10
-FEE = 0.0005                      # 0.05% per side
+FEE = 0.0005
 LOOKBACK = 365
+COOLDOWN_BARS = 96               # 1 day at 15m — post-hard-stop re-entry lock (StoplossGuard)
 CACHE = PROJECT_ROOT / ".cache_15m"
+YEARS = [2022, 2023, 2024]
 
 
-# ----------------------------------------------------------------------------- data
-def _fetch_15m(coin: str, start="2023-12-20", end="2025-01-01") -> pd.DataFrame:
+def _fetch_15m(coin: str, start="2021-12-15", end="2025-01-01") -> pd.DataFrame:
     CACHE.mkdir(exist_ok=True)
     fp = CACHE / f"{coin}_15m.pkl"
     if fp.exists():
         return pickle.load(open(fp, "rb"))
     from binance.enums import HistoricalKlinesType
-    cli = _client()
-    kl = cli.get_historical_klines(f"{coin}USDT", "15m", start, end,
-                                   klines_type=HistoricalKlinesType.FUTURES)
+    kl = _client().get_historical_klines(f"{coin}USDT", "15m", start, end,
+                                          klines_type=HistoricalKlinesType.FUTURES)
     df = pd.DataFrame(kl, columns=["t", "o", "h", "l", "c", "v", "ct", "qv", "n", "tb", "tq", "ig"])
     df = df[["t", "o", "h", "l", "c"]].astype({"o": float, "h": float, "l": float, "c": float})
     df["dt"] = pd.to_datetime(df["t"], unit="ms", utc=True)
@@ -67,8 +63,8 @@ def _funding_events(coin: str):
     if fp.exists():
         return pickle.load(open(fp, "rb"))
     cli = _client()
-    rows, start, end = [], int(pd.Timestamp("2023-12-01", tz="UTC").timestamp() * 1000), \
-        int(pd.Timestamp("2025-01-01", tz="UTC").timestamp() * 1000)
+    rows, start = [], int(pd.Timestamp("2021-12-01", tz="UTC").timestamp() * 1000)
+    end = int(pd.Timestamp("2025-01-01", tz="UTC").timestamp() * 1000)
     while start < end:
         try:
             batch = cli.futures_funding_rate(symbol=f"{coin}USDT", startTime=start, endTime=end, limit=1000)
@@ -86,9 +82,7 @@ def _funding_events(coin: str):
     return ts, rate
 
 
-# ----------------------------------------------------------------------------- signal
 def _daily_targets(coin: str, year: int) -> dict:
-    """date -> desired position (+1/-1/0) from daily Markov+hysteresis (no stop)."""
     es = pd.Timestamp(f"{year}-01-01", tz="UTC")
     ee = pd.Timestamp(f"{year}-12-31", tz="UTC")
     ss = es - pd.Timedelta(days=LOOKBACK + 10)
@@ -97,50 +91,46 @@ def _daily_targets(coin: str, year: int) -> dict:
         return {}
     sl = df[(df.index >= ss) & (df.index <= ee)]
     close = sl["close"].reset_index(drop=True)
-    n = len(close)
     if int((sl.index < es).sum()) < LOOKBACK:
         return {}
     dates = list(sl.index)
     pos = 0.0
     targets = {}
-    for t in range(LOOKBACK, n):
-        train = close.iloc[t - LOOKBACK:t]
-        labels = label_regimes(train, window=MARKOV_WINDOW, threshold=MARKOV_THRESHOLD)
+    for t in range(LOOKBACK, len(close)):
+        labels = label_regimes(close.iloc[t - LOOKBACK:t], window=MARKOV_WINDOW, threshold=MARKOV_THRESHOLD)
         s = 0.0 if labels.empty else float(signal_from_matrix(build_transition_matrix(labels), int(labels.iloc[-1])))
         desired = 1.0 if s > ENTRY_GATE else (-1.0 if s < -ENTRY_GATE else 0.0)
         if pos == 0.0:
             pos = desired
         elif desired != 0.0 and desired != pos:
             pos = desired if abs(s) >= FLIP else pos
-        d = dates[t]
-        if d >= es:
-            targets[d.date()] = int(pos)
+        if dates[t] >= es:
+            targets[dates[t].date()] = int(pos)
     return targets
 
 
-# ----------------------------------------------------------------------------- replays
-def replay_intraday(bars: pd.DataFrame, targets: dict, fund_ts, fund_rate):
-    """Walk 15m bars with real intrabar stop/trailing. Returns (daily_returns, trades, fee_frac, fund_frac, reasons)."""
-    ts_ms = np.array([int(t.timestamp() * 1000) for t in bars.index], dtype=np.int64)  # robust across index resolution
+def _bars_arrays(bars: pd.DataFrame):
+    """Precompute numpy arrays once per coin (the timestamp loop is the hot path)."""
+    ts_ms = np.array([int(t.timestamp() * 1000) for t in bars.index], dtype=np.int64)
     o, h, l, c = bars["o"].to_numpy(), bars["h"].to_numpy(), bars["l"].to_numpy(), bars["c"].to_numpy()
     days = np.array([d.date() for d in bars.index])
-    n = len(c)
+    return ts_ms, o, h, l, c, days
 
-    pos = 0; entry = mfe = prev_c = 0.0; entry_ms = 0; stopped_day = None
-    equity = 1.0
-    fee_frac = 0.0; fund_frac = 0.0
+
+def replay_intraday(arr, targets: dict, fund_ts, fund_rate, cooldown_bars: int):
+    """15m walk with intrabar stop/trailing + post-hard-stop cooldown."""
+    ts_ms, o, h, l, c, days = arr
+    n = len(c)
+    pos = 0; entry = mfe = prev_c = 0.0; entry_ms = 0; cooldown_until = 0
+    equity = 1.0; fee_frac = 0.0; fund_frac = 0.0
     trades = []; reasons = Counter(); daily_eq = {}
     fi = 0
     for i in range(n):
         day = days[i]
-        if stopped_day is not None and stopped_day != day:
-            stopped_day = None
-        # funding at 8h marks
         while fi < len(fund_ts) and fund_ts[fi] <= ts_ms[i]:
             if pos != 0:
                 equity *= (1 - pos * fund_rate[fi]); fund_frac += pos * fund_rate[fi]
             fi += 1
-        # manage open position
         if pos != 0:
             exit_px = None; reason = None
             if pos > 0:
@@ -162,17 +152,18 @@ def replay_intraday(bars: pd.DataFrame, targets: dict, fund_ts, fund_rate):
                 equity *= (1 - FEE); fee_frac += FEE
                 trades.append(dict(ret=pos * (exit_px / entry - 1), dur=(ts_ms[i] - entry_ms) / 3.6e6, reason=reason))
                 reasons[reason] += 1
-                pos = 0; stopped_day = day
+                if reason == "hard_stop":
+                    cooldown_until = i + cooldown_bars       # lock re-entry after a LOSING stop
+                pos = 0
             else:
                 equity *= (1 + pos * (c[i] / prev_c - 1)); prev_c = c[i]
                 mfe = max(mfe, h[i]) if pos > 0 else min(mfe, l[i])
-        # signal entry / flip at this bar
         desired = targets.get(day, 0)
         if pos == 0:
-            if desired != 0 and stopped_day != day:
+            if desired != 0 and i >= cooldown_until:
                 pos = desired; entry = mfe = prev_c = c[i]; entry_ms = ts_ms[i]
                 equity *= (1 - FEE); fee_frac += FEE
-        elif desired != 0 and desired != pos:                    # flip (price already MTM'd to close)
+        elif desired != 0 and desired != pos:                # flip — never cooled (not a stop)
             equity *= (1 - FEE); fee_frac += FEE
             trades.append(dict(ret=pos * (c[i] / entry - 1), dur=(ts_ms[i] - entry_ms) / 3.6e6, reason="signal_flip"))
             reasons["signal_flip"] += 1
@@ -183,16 +174,12 @@ def replay_intraday(bars: pd.DataFrame, targets: dict, fund_ts, fund_rate):
 
 
 def replay_daily_close(daily_close: pd.Series, targets: dict, fund_ts, fund_rate):
-    """Daily-harness model: exits checked only at the daily CLOSE (cumulative from entry)."""
-    idx = list(daily_close.index)
-    px = daily_close.to_numpy()
+    idx = list(daily_close.index); px = daily_close.to_numpy()
     ts_ms = np.array([int(pd.Timestamp(d).timestamp() * 1000) for d in idx], dtype=np.int64)
-    n = len(px)
     pos = 0; entry = mfe = prev_c = 0.0; entry_ms = 0; stopped_day = None
     equity = 1.0; fee_frac = 0.0; fund_frac = 0.0
-    trades = []; reasons = Counter(); daily_eq = {}
-    fi = 0
-    for i in range(n):
+    trades = []; reasons = Counter(); daily_eq = {}; fi = 0
+    for i in range(len(px)):
         day = idx[i].date() if hasattr(idx[i], "date") else idx[i]
         if stopped_day is not None and stopped_day != day:
             stopped_day = None
@@ -204,16 +191,15 @@ def replay_daily_close(daily_close: pd.Series, targets: dict, fund_ts, fund_rate
             equity *= (1 + pos * (px[i] / prev_c - 1)); prev_c = px[i]
             mfe = max(mfe, px[i]) if pos > 0 else min(mfe, px[i])
             cum = pos * (px[i] / entry - 1); peak_cum = pos * (mfe / entry - 1)
-            exit_now = reason = None
+            reason = None
             if peak_cum >= TRAIL_ACTIVATE and (peak_cum - cum) >= TRAIL_PCT:
-                exit_now, reason = True, "trailing_stop"
+                reason = "trailing_stop"
             elif cum <= -STOP_PCT:
-                exit_now, reason = True, "hard_stop"
-            if exit_now:
+                reason = "hard_stop"
+            if reason:
                 equity *= (1 - FEE); fee_frac += FEE
                 trades.append(dict(ret=cum, dur=(ts_ms[i] - entry_ms) / 3.6e6, reason=reason))
-                reasons[reason] += 1
-                pos = 0; stopped_day = day
+                reasons[reason] += 1; pos = 0; stopped_day = day
         desired = targets.get(day, 0)
         if pos == 0:
             if desired != 0 and stopped_day != day:
@@ -230,24 +216,19 @@ def replay_daily_close(daily_close: pd.Series, targets: dict, fund_ts, fund_rate
 
 
 def signal_only_returns(daily_close: pd.Series, targets: dict, cost=FEE) -> pd.Series:
-    """Baseline: pure equal-weight daily signal, exit only on flip, NO stop/trail.
-    Isolates whether the signal itself has edge in this construction."""
     ret = daily_close.pct_change().fillna(0.0).to_numpy()
     days = [(d.date() if hasattr(d, "date") else d) for d in daily_close.index]
-    pos = np.array([targets.get(d, 0) for d in days], dtype=float)   # target[D] is causal (from D-1)
+    pos = np.array([targets.get(d, 0) for d in days], dtype=float)
     turn = np.abs(np.diff(pos, prepend=0.0))
     return pd.Series(pos * ret - cost * turn, index=daily_close.index)
 
 
-# ----------------------------------------------------------------------------- metrics
 def _daily_returns(daily_eq: dict) -> pd.Series:
-    s = pd.Series(daily_eq).sort_index()
-    return s.pct_change().fillna(0.0)
+    return pd.Series(daily_eq).sort_index().pct_change().fillna(0.0)
 
 
-def _portfolio(per_coin_returns: list) -> pd.Series:
-    df = pd.concat(per_coin_returns, axis=1).fillna(0.0)
-    return df.mean(axis=1)
+def _portfolio(per_coin):
+    return pd.concat(per_coin, axis=1).fillna(0.0).mean(axis=1)
 
 
 def _sharpe(r):
@@ -260,28 +241,25 @@ def _maxdd(r):
     return float(((eq - rm) / rm).min())
 
 
-def _summarize(label, port, all_trades, fee_fracs, fund_fracs, reasons):
-    tot = float(np.prod(1 + port.to_numpy()) - 1)
-    durs = [t["dur"] for t in all_trades]
-    tot_ex = sum(reasons.values()) or 1
-    print(f"\n  {label}")
-    print(f"    return {tot:+.1%}   Sharpe {_sharpe(port):.2f}   maxDD {_maxdd(port):.1%}")
-    print(f"    trades {len(all_trades)}   avg duration {np.mean(durs):.1f}h ({np.mean(durs)/24:.1f}d)   "
-          f"fee drag {np.mean(fee_fracs)*100:.2f}%/coin   funding {np.mean(fund_fracs)*100:+.2f}%/coin")
-    mix = " ".join(f"{k}={v}({v/tot_ex:.0%})" for k, v in reasons.most_common())
-    print(f"    exits: {mix}")
-    return tot
+def _exitmix(reasons):
+    tot = sum(reasons.values()) or 1
+    hs, ts_ = reasons.get("hard_stop", 0), reasons.get("trailing_stop", 0)
+    return f"hard {hs/tot:.0%} / trail {ts_/tot:.0%} / flip {reasons.get('signal_flip',0)/tot:.0%}"
 
 
-def main():
-    year = 2024
-    print("=" * 96)
-    print(f"ITEM 9 — 15-MINUTE INTRADAY EXECUTION HARNESS vs DAILY-CLOSE MODEL ({year})")
-    print(f"stop -{STOP_PCT:.0%} · trail {TRAIL_PCT:.0%}/+{TRAIL_ACTIVATE:.0%} · no flat TP · fee {FEE:.2%}/side + funding")
-    print("=" * 96)
-    ir, dr, so = [], [], []
-    i_tr, d_tr, i_ff, d_ff, i_fd, d_fd = [], [], [], [], [], []
-    i_rs, d_rs = Counter(), Counter()
+def _line(label, port, trades=None, fee=None, reasons=None):
+    base = f"    {label:<30}{float(np.prod(1+port.to_numpy())-1):>+9.1%}{_sharpe(port):>8.2f}{_maxdd(port):>8.1%}"
+    if trades is not None:
+        durs = [t["dur"] for t in trades] or [0]
+        base += f"   {len(trades):>5}tr  {np.mean(durs)/24:>4.1f}d  fee {np.mean(fee)*100:>4.1f}%  [{_exitmix(reasons)}]"
+    print(base)
+
+
+def run_year(year):
+    so, dc, i0, i1 = [], [], [], []
+    dtr, i0tr, i1tr = [], [], []
+    dfe, i0fe, i1fe = [], [], []
+    drs, i0rs, i1rs = Counter(), Counter(), Counter()
     used = []
     for coin in UNIVERSE:
         targets = _daily_targets(coin, year)
@@ -291,22 +269,36 @@ def main():
         bars = bars[(bars.index >= pd.Timestamp(f"{year}-01-01", tz="UTC")) &
                     (bars.index <= pd.Timestamp(f"{year}-12-31 23:59", tz="UTC"))]
         if len(bars) < 20000:
-            print(f"  (skip {coin}: {len(bars)} 15m bars)"); continue
+            continue
         fts, frate = _funding_events(coin)
-        ri, ti, ffi, fdi, rsi = replay_intraday(bars, targets, fts, frate)
-        daily_close = bars["c"].resample("1D").last().dropna()
-        rd, td, ffd, fdd, rsd = replay_daily_close(daily_close, targets, fts, frate)
-        ir.append(ri.rename(coin)); dr.append(rd.rename(coin))
-        so.append(signal_only_returns(daily_close, targets).rename(coin))
-        i_tr += ti; d_tr += td; i_ff.append(ffi); d_ff.append(ffd); i_fd.append(fdi); d_fd.append(fdd)
-        i_rs += rsi; d_rs += rsd; used.append(coin)
-    print(f"\nUniverse: {len(used)} coins {used}")
-    port_so = _portfolio(so)
-    print("\n  SIGNAL-ONLY (daily, NO stop/trail — pure equal-weight signal edge)")
-    print(f"    return {float(np.prod(1 + port_so.to_numpy()) - 1):+.1%}   Sharpe {_sharpe(port_so):.2f}   maxDD {_maxdd(port_so):.1%}")
-    _summarize("DAILY-CLOSE MODEL (daily harness: stop/trail checked at close)", _portfolio(dr), d_tr, d_ff, d_fd, d_rs)
-    _summarize("15-MINUTE INTRADAY (real intrabar stop/trail)", _portfolio(ir), i_tr, i_ff, i_fd, i_rs)
-    print("=" * 96)
+        dclose = bars["c"].resample("1D").last().dropna()
+        arr = _bars_arrays(bars)
+        so.append(signal_only_returns(dclose, targets).rename(coin))
+        r, t, f, _, rs = replay_daily_close(dclose, targets, fts, frate)
+        dc.append(r.rename(coin)); dtr += t; dfe.append(f); drs += rs
+        r, t, f, _, rs = replay_intraday(arr, targets, fts, frate, cooldown_bars=1)
+        i0.append(r.rename(coin)); i0tr += t; i0fe.append(f); i0rs += rs
+        r, t, f, _, rs = replay_intraday(arr, targets, fts, frate, cooldown_bars=COOLDOWN_BARS)
+        i1.append(r.rename(coin)); i1tr += t; i1fe.append(f); i1rs += rs
+        used.append(coin)
+    regime = {2022: "BEAR", 2023: "RECOVERY", 2024: "BULL"}[year]
+    print(f"\n{year} [{regime}]  ({len(used)} coins)   {' '*7}{'return':>9}{'Sharpe':>8}{'maxDD':>8}")
+    print("    " + "-" * 92)
+    _line("signal-only (no stops)", _portfolio(so))
+    _line("daily-close (daily harness)", _portfolio(dc), dtr, dfe, drs)
+    _line("15m, no cooldown", _portfolio(i0), i0tr, i0fe, i0rs)
+    _line("15m + 1d cooldown (DEPLOYED)", _portfolio(i1), i1tr, i1fe, i1rs)
+
+
+def main():
+    print("=" * 116)
+    print("ITEM 9 — 15m INTRADAY EXECUTION, MULTI-YEAR  |  stop -5% · trail 8%/+10% · no TP · "
+          "fee 0.05%/side+funding · 1d cooldown")
+    print("  (equal-weight; absolute level is NOT the sized book — see project_runportfolio_lookahead)")
+    print("=" * 116)
+    for y in YEARS:
+        run_year(y)
+    print("=" * 116)
 
 
 if __name__ == "__main__":
