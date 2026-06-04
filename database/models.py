@@ -43,6 +43,12 @@ class SentimentScore(Base):
     long_short_ratio: Mapped[Optional[float]] = mapped_column(Float)
     funding_rate: Mapped[Optional[float]] = mapped_column(Float)
     hyperliquid_score: Mapped[Optional[float]] = mapped_column(Float)
+    # Raw top-trader long fraction + open-interest snapshot. Recorded (not yet
+    # used in the blend) so the size layer can be backtested once enough history
+    # accumulates — OI/top-trader/L-S all have only ~30d of API history.
+    top_trader_long_pct: Mapped[Optional[float]] = mapped_column(Float)
+    open_interest: Mapped[Optional[float]] = mapped_column(Float)
+    oi_change_pct: Mapped[Optional[float]] = mapped_column(Float)
     unified: Mapped[float] = mapped_column(Float, nullable=False)
     signal: Mapped[str] = mapped_column(String(16), nullable=False)  # BULLISH/BEARISH/NEUTRAL
 

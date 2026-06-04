@@ -46,6 +46,7 @@ from .binance_data import fetch_binance_ohlcv, volume_anomaly
 from .binance_market import (
     fetch_funding_rate,
     fetch_long_short_ratio,
+    fetch_open_interest,
     fetch_top_trader_position_ratio,
 )
 from .coingecko_data import fetch_price_changes_7d
@@ -80,6 +81,11 @@ class UnifiedScore:
     fear_greed_multiplier: float
     unified: float
     signal: str  # BULLISH / BEARISH / NEUTRAL
+    # Recorded-only (not in the blend): raw top-trader long fraction + OI snapshot,
+    # to enable future backtesting of the size layer once history accumulates.
+    top_trader_long_pct: Optional[float] = None
+    open_interest: Optional[float] = None
+    oi_change_pct: Optional[float] = None
 
 
 def _label(score: float) -> str:
@@ -158,6 +164,13 @@ def compute_unified_scores(
         # Hyperliquid CDN leaderboard broke 2026-05-27, see module docstring.
         tt = fetch_top_trader_position_ratio(coin)
         hl_signal = tt.signal if tt else None
+        tt_long_pct = tt.long_pct if tt else None
+
+        # Open interest — recorded only (NOT blended). 30d API history means it
+        # can't be backtested today; logging it now starts that history.
+        oi = fetch_open_interest(coin)
+        oi_value = oi.current_oi if oi else None
+        oi_change = oi.change_pct if oi else None
 
         components = {
             "news": news_signal,
@@ -183,6 +196,9 @@ def compute_unified_scores(
             fear_greed_multiplier=fg_mult,
             unified=unified,
             signal=_label(unified),
+            top_trader_long_pct=tt_long_pct,
+            open_interest=oi_value,
+            oi_change_pct=oi_change,
         )
     return result
 
@@ -203,6 +219,9 @@ def persist_unified_scores(scores: dict[str, UnifiedScore]) -> None:
                 long_short_ratio=us.long_short_ratio,
                 funding_rate=us.funding_rate,
                 hyperliquid_score=us.hyperliquid_score,
+                top_trader_long_pct=us.top_trader_long_pct,
+                open_interest=us.open_interest,
+                oi_change_pct=us.oi_change_pct,
                 unified=us.unified,
                 signal=us.signal,
             )
