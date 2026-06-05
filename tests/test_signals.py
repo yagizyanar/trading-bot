@@ -320,9 +320,9 @@ def test_vol_normalization_multiplier_math():
     assert _vol_normalization_multiplier(-1.0) == 1.0
 
 
-def test_vol_normalization_shrinks_high_vol_position():
-    # markov 0.6 → 5% base, sentiment/tech ×1.0, Bull regime ×1.0.
-    # realized_vol = 2× target → vol_mult 0.5 → final 2.5% (robust to the constant).
+def test_vol_norm_disabled_high_vol_not_shrunk():
+    # Item 5 DISABLED 2026-06-05 (flat sizing): vol_mult forced to 1.0, so a high-vol
+    # full signal is NO LONGER shrunk — it stays at the 5% base.
     d = evaluate_signal(
         "SOL",
         regime_result=_make_regime(signal=0.6, regime="Bull", realized_vol=2 * TARGET_DAILY_VOL),
@@ -330,11 +330,12 @@ def test_vol_normalization_shrinks_high_vol_position():
         technical=_make_tech("BULL"),
         capital=10000.0, cb_multiplier=1.0, cb_allows_new=True,
     )
-    assert d.position_size_pct == pytest.approx(BASE_FULL_PCT * 0.5)
+    assert d.position_size_pct == pytest.approx(BASE_FULL_PCT)
 
 
-def test_vol_normalization_grows_low_vol_position_and_clips():
-    # realized_vol = target/10 → raw scalar 10 → clipped to VOL_NORM_MAX (2.0) → final 10%.
+def test_vol_norm_disabled_low_vol_not_grown():
+    # Item 5 DISABLED 2026-06-05 (flat sizing): vol_mult forced to 1.0, so a low-vol
+    # full signal is NO LONGER grown/clipped — it stays at the 5% base.
     d = evaluate_signal(
         "SOL",
         regime_result=_make_regime(signal=0.6, regime="Bull", realized_vol=TARGET_DAILY_VOL / 10),
@@ -342,7 +343,7 @@ def test_vol_normalization_grows_low_vol_position_and_clips():
         technical=_make_tech("BULL"),
         capital=10000.0, cb_multiplier=1.0, cb_allows_new=True,
     )
-    assert d.position_size_pct == pytest.approx(BASE_FULL_PCT * VOL_NORM_MAX)
+    assert d.position_size_pct == pytest.approx(BASE_FULL_PCT)
 
 
 def test_vol_normalization_absent_is_neutral():
@@ -360,9 +361,9 @@ def test_vol_normalization_absent_is_neutral():
 # ---------------------------------------------------------------------------
 # Item 7 — hysteresis / re-entry band on flips
 # ---------------------------------------------------------------------------
-def test_hysteresis_holds_on_weak_opposite_signal():
-    # Currently LONG; signal flips weakly bearish (-0.2, below flip threshold 0.3)
-    # → SKIP (holds the LONG; SKIP doesn't trigger an exit).
+def test_hysteresis_disabled_flips_on_weak_opposite():
+    # Item 7 DISABLED 2026-06-05 (MARKOV_FLIP_THRESHOLD=0): a weak opposite (-0.2)
+    # now FLIPS the LONG straight to SHORT instead of holding.
     d = evaluate_signal(
         "SOL",
         regime_result=_make_regime(signal=-0.2, regime="Bear"),
@@ -371,8 +372,7 @@ def test_hysteresis_holds_on_weak_opposite_signal():
         capital=10000.0, cb_multiplier=1.0, cb_allows_new=True,
         current_position="LONG",
     )
-    assert d.decision == "SKIP"
-    assert "hysteresis" in (d.skip_reason or "")
+    assert d.decision == "SHORT"
 
 
 def test_hysteresis_allows_strong_flip():
@@ -415,7 +415,8 @@ def test_hysteresis_does_not_block_fresh_entry():
     assert d.decision == "LONG"
 
 
-def test_hysteresis_short_position_weak_bullish_holds():
+def test_hysteresis_disabled_short_flips_on_weak_bullish():
+    # Item 7 DISABLED 2026-06-05: a weak bullish (0.2) now FLIPS the SHORT to LONG.
     d = evaluate_signal(
         "SOL",
         regime_result=_make_regime(signal=0.2, regime="Bull"),
@@ -424,5 +425,4 @@ def test_hysteresis_short_position_weak_bullish_holds():
         capital=10000.0, cb_multiplier=1.0, cb_allows_new=True,
         current_position="SHORT",
     )
-    assert d.decision == "SKIP"
-    assert "hysteresis" in (d.skip_reason or "")
+    assert d.decision == "LONG"

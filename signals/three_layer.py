@@ -98,7 +98,9 @@ SENTIMENT_2X_THRESHOLD = 0.2
 # entry gate MARKOV_SMALL=0.1 and this) → SKIP, which HOLDS the current position
 # (populate_exit_trend only exits on a *strong opposite* decision, not a SKIP).
 # Cuts round-trip churn / fee drag from whipsawing on noise. 0.3 = the medium tier.
-MARKOV_FLIP_THRESHOLD = 0.3
+# Item 7 DISABLED 2026-06-05 (user request, baseline config): 0 = no hysteresis,
+# any opposite signal flips immediately. Set back to 0.3 to re-enable.
+MARKOV_FLIP_THRESHOLD = 0.0
 
 ALLOWED_LONG_REGIMES  = ("Bull", "Sideways", "Euphoria")
 ALLOWED_SHORT_REGIMES = ("Bear", "Sideways")
@@ -270,7 +272,9 @@ def evaluate_signal(
     sent_mult   = _sentiment_multiplier(sent, decision)
     tech_mult   = _technical_multiplier(tech, decision)
     regime_mult = _regime_size_multiplier(regime_result.regime)
-    vol_mult    = _vol_normalization_multiplier(regime_result.realized_vol)
+    # Item 5 DISABLED 2026-06-05 (user request, baseline config): flat sizing, no
+    # vol-normalization. Restore `_vol_normalization_multiplier(regime_result.realized_vol)` to re-enable.
+    vol_mult    = 1.0
 
     final_pct = base_pct * sent_mult * tech_mult * regime_mult * vol_mult * cb_multiplier
     dollars   = capital * final_pct
