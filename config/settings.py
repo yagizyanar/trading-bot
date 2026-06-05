@@ -111,7 +111,7 @@ SECTOR_MAP: Final[dict[str, str]] = {
 # (strategies/freqai_sentiment_strategy.py). Set to 1 on 2026-06-03 to force 1x
 # for the real-money go-live (handoff §0.6): the edge is ~Sharpe 1, amplifying it
 # just amplifies variance. Raise back to 2 once live execution is validated.
-MAX_LEVERAGE: Final[int] = 1
+MAX_LEVERAGE: Final[int] = 3   # dynamic leverage 1/2/3x by |signal| (2026-06-05); was 1
 # Read directly from config.json::max_open_trades so the internal gate
 # (risk/position_manager.py::can_open_position) and Freqtrade itself can
 # never drift apart. Fallback 10 only kicks in if config.json is missing.

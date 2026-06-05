@@ -169,6 +169,14 @@ def _vol_normalization_multiplier(realized_vol: float) -> float:
     return float(min(VOL_NORM_MAX, max(VOL_NORM_MIN, TARGET_DAILY_VOL / realized_vol)))
 
 
+def _leverage_from_signal(ms: float) -> int:
+    """Dynamic leverage by |markov signal| (2026-06-05): |ms|>0.5 → 3x, >0.3 → 2x,
+    else 1x. The size layer divides position size by this same tier so NOTIONAL is
+    held constant. settings.MAX_LEVERAGE (=3) is the authoritative ceiling."""
+    a = abs(ms)
+    return 3 if a > 0.5 else (2 if a > 0.3 else 1)
+
+
 def _choose_leverage(decision: str, sentiment: float, regime: str) -> int:
     """1x in Sideways; otherwise 2x only when sentiment strongly favours the trade."""
     if regime == "Sideways":
@@ -276,15 +284,16 @@ def evaluate_signal(
     # vol-normalization. Restore `_vol_normalization_multiplier(regime_result.realized_vol)` to re-enable.
     vol_mult    = 1.0
 
-    final_pct = base_pct * sent_mult * tech_mult * regime_mult * vol_mult * cb_multiplier
+    lev       = _leverage_from_signal(ms)   # dynamic leverage by |signal| (2026-06-05)
+    # Size divides by leverage to keep NOTIONAL constant (notional = base × multipliers).
+    final_pct = base_pct * sent_mult * tech_mult * regime_mult * vol_mult * cb_multiplier / lev
     dollars   = capital * final_pct
-    lev       = _choose_leverage(decision, sent, regime_result.regime)
 
     reason = (
         f"markov={ms:+.2f} ({decision} base {base_pct:.0%}) "
         f"× sent={sent_mult:.2f} × tech={tech_mult:.2f} "
         f"× regime={regime_mult:.2f} × vol={vol_mult:.2f} × cb={cb_multiplier:.2f} "
-        f"→ {final_pct:.2%} lev={lev}x"
+        f"/ lev={lev}x → {final_pct:.2%} margin (notional {final_pct*lev:.2%})"
     )
     return SignalDecision(
         coin=coin, decision=decision,

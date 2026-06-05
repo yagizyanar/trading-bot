@@ -215,23 +215,16 @@ class FreqAISentimentStrategy(IStrategy):  # type: ignore[misc,valid-type]
         self, pair: str, current_time: datetime, current_rate: float,
         proposed_leverage: float, max_leverage: float, side: str, **_: Any,
     ) -> float:
-        # Use the Markov-driven leverage rule from signals.three_layer:
-        #   - Sideways or Crash regime → 1x
-        #   - LONG  in Bull/Euphoria with sentiment > +0.3 → 2x
-        #   - SHORT in Bear           with sentiment < -0.3 → 2x
-        #   - else → 1x
-        # The result is then capped by settings.MAX_LEVERAGE — the single
-        # authoritative leverage ceiling. Set MAX_LEVERAGE=1 to force 1x
-        # everywhere (e.g. while validating live execution with real money);
-        # _choose_leverage still records its 2x *intent* in signal_log.
-        from signals.three_layer import _choose_leverage
+        # Dynamic leverage by |markov signal| (2026-06-05): |s|>0.5 → 3x, >0.3 → 2x,
+        # else 1x — matching signals.three_layer._leverage_from_signal (the size layer
+        # divides position size by the same tier so NOTIONAL stays constant). Capped by
+        # settings.MAX_LEVERAGE (=3) and the exchange max_leverage.
+        from signals.three_layer import _leverage_from_signal
         from config.settings import MAX_LEVERAGE
 
         coin = pair.split("/")[0]
-        sent, _, _ = _latest_decision(coin)
-        regime = _latest_regime(coin)
-        decision = "SHORT" if str(side).lower() == "short" else "LONG"
-        lev = _choose_leverage(decision, sent, regime)
+        _, markov, _ = _latest_decision(coin)
+        lev = _leverage_from_signal(markov)
         return float(min(lev, max_leverage, MAX_LEVERAGE))
 
     # ------------------------------------------------------------------
