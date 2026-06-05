@@ -43,10 +43,15 @@ class FreqAISentimentStrategy(IStrategy):  # type: ignore[misc,valid-type]
     # Trailing TP widened 2026-06-04 (2%/+3% -> 8%/+10%) after live evidence: the
     # old 2% trail caused 63% of exits and capped winners at +2.4% avg (only 4
     # trades ever >+8%), amputating the 20-day-momentum fat tail. minimal_roi
-    # disabled (was +15%, fired 2x ever) so the wide trail manages the upside.
+    # disabled (was +15%, fired 2x ever) so the trail manages the upside.
+    # 2026-06-05 (user): activate earlier at +5%, trail 4% to protect ~50% of a
+    # typical +8% peak. Freqtrade requires offset > trail, so the +5% activation
+    # caps the trail < 5% -> 4% is the widest sensible value. NB: 4% < the 5-6%
+    # ATR coins' daily range, so some premature exits on the most volatile names
+    # are unavoidable at this activation (the +8%/6% pairing would clear them).
     trailing_stop = True
-    trailing_stop_positive = 0.08
-    trailing_stop_positive_offset = 0.10
+    trailing_stop_positive = 0.04
+    trailing_stop_positive_offset = 0.05
     trailing_only_offset_is_reached = True
     process_only_new_candles = True
     use_exit_signal = True

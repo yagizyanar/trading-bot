@@ -6,7 +6,7 @@ mechanics. Now models the 1-day post-stop cooldown (StoplossGuard) and runs
 2022/2023/2024.
 
 Live config replicated (config.json):
-  stop -5% from entry · trailing 8% activating at +10% · no flat TP
+  stop -5% from entry · trailing 4% activating at +5% · no flat TP
   fee 0.05%/side · funding at the 8h marks · 1-day (96-bar) cooldown after a
   HARD STOP (matches StoplossGuard: re-entry blocked for 24h after a losing stop;
   flips and winning trailing exits unaffected — trailing only fires in profit).
@@ -32,8 +32,8 @@ from backtest.oos_multiyear import UNIVERSE, _client, _spot
 ENTRY_GATE = 0.2
 FLIP = 0.0   # item 7 hysteresis OFF (current deployed baseline config, 2026-06-05); was 0.3
 STOP_PCT = 0.05
-TRAIL_PCT = 0.08
-TRAIL_ACTIVATE = 0.10
+TRAIL_PCT = 0.04        # trail 4% (2026-06-05): protects ~50% of a +8% peak
+TRAIL_ACTIVATE = 0.05   # activate at +5% (offset>trail required, so trail<5%)
 FEE = 0.0005
 LOOKBACK = 365
 COOLDOWN_BARS = 96               # 1 day at 15m — post-hard-stop re-entry lock (StoplossGuard)
