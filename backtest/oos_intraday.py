@@ -30,7 +30,7 @@ from markov.regime_detector import build_transition_matrix, label_regimes, signa
 from backtest.oos_multiyear import UNIVERSE, _client, _spot
 
 ENTRY_GATE = 0.2
-FLIP = 0.3
+FLIP = 0.0   # item 7 hysteresis OFF (current deployed baseline config, 2026-06-05); was 0.3
 STOP_PCT = 0.05
 TRAIL_PCT = 0.08
 TRAIL_ACTIVATE = 0.10
@@ -292,8 +292,8 @@ def run_year(year):
 
 def main():
     print("=" * 116)
-    print("ITEM 9 — 15m INTRADAY EXECUTION, MULTI-YEAR  |  stop -5% · trail 8%/+10% · no TP · "
-          "fee 0.05%/side+funding · 1d cooldown")
+    print("ITEM 9 — 15m INTRADAY, CURRENT DEPLOYED CONFIG (items 5-7 OFF: hysteresis off / FLIP=0)  |  "
+          "stop -5% · trail 8%/+10% · no TP · fee 0.05%/side+funding · 1d cooldown · 1x")
     print("  (equal-weight; absolute level is NOT the sized book — see project_runportfolio_lookahead)")
     print("=" * 116)
     for y in YEARS:
