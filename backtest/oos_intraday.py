@@ -82,20 +82,20 @@ def _funding_events(coin: str):
     return ts, rate
 
 
-def _daily_targets(coin: str, year: int) -> dict:
+def _daily_targets(coin: str, year: int, return_strength: bool = False):
     es = pd.Timestamp(f"{year}-01-01", tz="UTC")
     ee = pd.Timestamp(f"{year}-12-31", tz="UTC")
     ss = es - pd.Timedelta(days=LOOKBACK + 10)
     df = _spot(f"{coin}USDT")
     if df is None:
-        return {}
+        return ({}, {}) if return_strength else {}
     sl = df[(df.index >= ss) & (df.index <= ee)]
     close = sl["close"].reset_index(drop=True)
     if int((sl.index < es).sum()) < LOOKBACK:
-        return {}
+        return ({}, {}) if return_strength else {}
     dates = list(sl.index)
     pos = 0.0
-    targets = {}
+    targets = {}; strength = {}
     for t in range(LOOKBACK, len(close)):
         labels = label_regimes(close.iloc[t - LOOKBACK:t], window=MARKOV_WINDOW, threshold=MARKOV_THRESHOLD)
         s = 0.0 if labels.empty else float(signal_from_matrix(build_transition_matrix(labels), int(labels.iloc[-1])))
@@ -106,7 +106,8 @@ def _daily_targets(coin: str, year: int) -> dict:
             pos = desired if abs(s) >= FLIP else pos
         if dates[t] >= es:
             targets[dates[t].date()] = int(pos)
-    return targets
+            strength[dates[t].date()] = abs(s)
+    return (targets, strength) if return_strength else targets
 
 
 def _bars_arrays(bars: pd.DataFrame):
@@ -117,11 +118,24 @@ def _bars_arrays(bars: pd.DataFrame):
     return ts_ms, o, h, l, c, days
 
 
-def replay_intraday(arr, targets: dict, fund_ts, fund_rate, cooldown_bars: int):
-    """15m walk with intrabar stop/trailing + post-hard-stop cooldown."""
+def _lev_tier(s):
+    """Dynamic leverage by |signal| at entry: |s|>0.5 → 3x, >0.3 → 2x, else 1x (cap 3x)."""
+    a = abs(s)
+    return 3 if a > 0.5 else (2 if a > 0.3 else 1)
+
+
+def replay_intraday(arr, targets: dict, fund_ts, fund_rate, cooldown_bars: int,
+                    strength: dict = None, dynamic_lev: bool = False):
+    """15m walk with intrabar stop/trailing + post-hard-stop cooldown.
+
+    dynamic_lev: assign 1x/2x/3x by |signal| at entry. Position SIZE shrinks with
+    leverage so NOTIONAL is held constant (per the user's risk-constant rule) → the
+    only new effect is LIQUIDATION: a leveraged position is force-closed (loss capped
+    at its margin ≈ -0.9/lev) if a 15m bar GAPS past the margin. Smooth moves still
+    hit the -5% stop first."""
     ts_ms, o, h, l, c, days = arr
     n = len(c)
-    pos = 0; entry = mfe = prev_c = 0.0; entry_ms = 0; cooldown_until = 0
+    pos = 0; entry = mfe = prev_c = 0.0; entry_ms = 0; cooldown_until = 0; lev = 1
     equity = 1.0; fee_frac = 0.0; fund_frac = 0.0
     trades = []; reasons = Counter(); daily_eq = {}
     fi = 0
@@ -133,14 +147,20 @@ def replay_intraday(arr, targets: dict, fund_ts, fund_rate, cooldown_bars: int):
             fi += 1
         if pos != 0:
             exit_px = None; reason = None
-            if pos > 0:
+            if lev >= 2:                                      # liquidation: a bar GAPS past the margin
+                liq = 0.9 / lev                               # 3x→0.30, 2x→0.45 adverse
+                if pos > 0 and o[i] <= entry * (1 - liq):
+                    exit_px = entry * (1 - liq); reason = "liquidation"
+                elif pos < 0 and o[i] >= entry * (1 + liq):
+                    exit_px = entry * (1 + liq); reason = "liquidation"
+            if exit_px is None and pos > 0:
                 if mfe >= entry * (1 + TRAIL_ACTIVATE):
                     lvl = mfe * (1 - TRAIL_PCT)
                     if l[i] <= lvl:
                         exit_px = o[i] if o[i] < lvl else lvl; reason = "trailing_stop"
                 elif l[i] <= entry * (1 - STOP_PCT):
                     lvl = entry * (1 - STOP_PCT); exit_px = o[i] if o[i] < lvl else lvl; reason = "hard_stop"
-            else:
+            elif exit_px is None and pos < 0:
                 if mfe <= entry * (1 - TRAIL_ACTIVATE):
                     lvl = mfe * (1 + TRAIL_PCT)
                     if h[i] >= lvl:
@@ -152,8 +172,8 @@ def replay_intraday(arr, targets: dict, fund_ts, fund_rate, cooldown_bars: int):
                 equity *= (1 - FEE); fee_frac += FEE
                 trades.append(dict(ret=pos * (exit_px / entry - 1), dur=(ts_ms[i] - entry_ms) / 3.6e6, reason=reason))
                 reasons[reason] += 1
-                if reason == "hard_stop":
-                    cooldown_until = i + cooldown_bars       # lock re-entry after a LOSING stop
+                if reason in ("hard_stop", "liquidation"):
+                    cooldown_until = i + cooldown_bars
                 pos = 0
             else:
                 equity *= (1 + pos * (c[i] / prev_c - 1)); prev_c = c[i]
@@ -162,12 +182,14 @@ def replay_intraday(arr, targets: dict, fund_ts, fund_rate, cooldown_bars: int):
         if pos == 0:
             if desired != 0 and i >= cooldown_until:
                 pos = desired; entry = mfe = prev_c = c[i]; entry_ms = ts_ms[i]
+                lev = _lev_tier(strength.get(day, 0.0)) if dynamic_lev else 1
                 equity *= (1 - FEE); fee_frac += FEE
         elif desired != 0 and desired != pos:                # flip — never cooled (not a stop)
             equity *= (1 - FEE); fee_frac += FEE
             trades.append(dict(ret=pos * (c[i] / entry - 1), dur=(ts_ms[i] - entry_ms) / 3.6e6, reason="signal_flip"))
             reasons["signal_flip"] += 1
             pos = desired; entry = mfe = prev_c = c[i]; entry_ms = ts_ms[i]
+            lev = _lev_tier(strength.get(day, 0.0)) if dynamic_lev else 1
             equity *= (1 - FEE); fee_frac += FEE
         daily_eq[day] = equity
     return _daily_returns(daily_eq), trades, fee_frac, fund_frac, reasons
@@ -243,8 +265,9 @@ def _maxdd(r):
 
 def _exitmix(reasons):
     tot = sum(reasons.values()) or 1
-    hs, ts_ = reasons.get("hard_stop", 0), reasons.get("trailing_stop", 0)
-    return f"hard {hs/tot:.0%} / trail {ts_/tot:.0%} / flip {reasons.get('signal_flip',0)/tot:.0%}"
+    hs, ts_, liq = reasons.get("hard_stop", 0), reasons.get("trailing_stop", 0), reasons.get("liquidation", 0)
+    base = f"hard {hs/tot:.0%} / trail {ts_/tot:.0%} / flip {reasons.get('signal_flip',0)/tot:.0%}"
+    return base + (f" / LIQ {liq/tot:.0%}({liq})" if liq else "")
 
 
 def _line(label, port, trades=None, fee=None, reasons=None):
@@ -256,13 +279,13 @@ def _line(label, port, trades=None, fee=None, reasons=None):
 
 
 def run_year(year):
-    so, dc, i0, i1 = [], [], [], []
-    dtr, i0tr, i1tr = [], [], []
-    dfe, i0fe, i1fe = [], [], []
-    drs, i0rs, i1rs = Counter(), Counter(), Counter()
+    so, dc, i0, i1, i2 = [], [], [], [], []
+    dtr, i0tr, i1tr, i2tr = [], [], [], []
+    dfe, i0fe, i1fe, i2fe = [], [], [], []
+    drs, i0rs, i1rs, i2rs = Counter(), Counter(), Counter(), Counter()
     used = []
     for coin in UNIVERSE:
-        targets = _daily_targets(coin, year)
+        targets, strength = _daily_targets(coin, year, return_strength=True)
         if not targets:
             continue
         bars = _fetch_15m(coin)
@@ -280,6 +303,8 @@ def run_year(year):
         i0.append(r.rename(coin)); i0tr += t; i0fe.append(f); i0rs += rs
         r, t, f, _, rs = replay_intraday(arr, targets, fts, frate, cooldown_bars=COOLDOWN_BARS)
         i1.append(r.rename(coin)); i1tr += t; i1fe.append(f); i1rs += rs
+        r, t, f, _, rs = replay_intraday(arr, targets, fts, frate, COOLDOWN_BARS, strength=strength, dynamic_lev=True)
+        i2.append(r.rename(coin)); i2tr += t; i2fe.append(f); i2rs += rs
         used.append(coin)
     regime = {2022: "BEAR", 2023: "RECOVERY", 2024: "BULL"}[year]
     print(f"\n{year} [{regime}]  ({len(used)} coins)   {' '*7}{'return':>9}{'Sharpe':>8}{'maxDD':>8}")
@@ -287,13 +312,14 @@ def run_year(year):
     _line("signal-only (no stops)", _portfolio(so))
     _line("daily-close (daily harness)", _portfolio(dc), dtr, dfe, drs)
     _line("15m, no cooldown", _portfolio(i0), i0tr, i0fe, i0rs)
-    _line("15m + 1d cooldown (DEPLOYED)", _portfolio(i1), i1tr, i1fe, i1rs)
+    _line("15m + 1d cooldown (current)", _portfolio(i1), i1tr, i1fe, i1rs)
+    _line("15m + cooldown + DYN LEV 1/2/3x", _portfolio(i2), i2tr, i2fe, i2rs)
 
 
 def main():
     print("=" * 116)
-    print("ITEM 9 — 15m INTRADAY, CURRENT DEPLOYED CONFIG (items 5-7 OFF: hysteresis off / FLIP=0)  |  "
-          "stop -5% · trail 8%/+10% · no TP · fee 0.05%/side+funding · 1d cooldown · 1x")
+    print("ITEM 9 — 15m INTRADAY + DYNAMIC LEVERAGE (items 5-7 OFF / FLIP=0)  |  stop -5% · trail 8%/+10% · "
+          "no TP · fee 0.05%/side+funding · 1d cooldown · DYN LEV 1/2/3x by |signal|, NOTIONAL held CONSTANT")
     print("  (equal-weight; absolute level is NOT the sized book — see project_runportfolio_lookahead)")
     print("=" * 116)
     for y in YEARS:
