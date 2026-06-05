@@ -60,7 +60,9 @@
       "1000PEPE/USDT:USDT",
       "FET/USDT:USDT",
       "RENDER/USDT:USDT",
-      "TAO/USDT:USDT"
+      "TAO/USDT:USDT",
+      "WLD/USDT:USDT",
+      "UNI/USDT:USDT"
     ],
     "pair_blacklist": []
   },

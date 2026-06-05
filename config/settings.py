@@ -85,6 +85,12 @@ TARGET_COINS: Final[tuple[str, ...]] = (
     "WIF", "1000BONK", "1000PEPE",
     # AI sector (added 2026-05-28).
     "FET", "RENDER", "TAO",
+    # Diversifiers added 2026-06-05: low BTC-corr AND the 20d Markov signal clears
+    # the current-universe bar (backtest/signal_quality_check.py). WLD (AI/identity,
+    # BTC-corr 0.42, signal Sharpe 0.48), UNI (DeFi DEX, corr 0.62, Sharpe 0.34).
+    # XRP/FIL/ENA were rejected — signal at/below 0 (XRP's regulatory-jump
+    # decorrelation is exactly why 20d momentum can't ride it).
+    "WLD", "UNI",
 )
 QUOTE: Final[str] = "USDT"
 PAIRS: Final[tuple[str, ...]] = tuple(f"{c}/{QUOTE}" for c in TARGET_COINS)
@@ -99,12 +105,12 @@ SECTOR_MAP: Final[dict[str, str]] = {
     # BTC dominance + ETH beta; alts trade more on idiosyncratic narratives.
     "SOL": "L1-MAJOR", "AVAX": "L1-MAJOR", "NEAR": "L1-MAJOR", "DOT": "L1-MAJOR",
     "APT": "L1-ALT",   "SUI": "L1-ALT",   "ATOM": "L1-ALT",   "S": "L1-ALT",
-    "INJ": "DEFI", "DYDX": "DEFI", "GMX": "DEFI",
+    "INJ": "DEFI", "DYDX": "DEFI", "GMX": "DEFI", "UNI": "DEFI",
     "SAND": "GAMING", "MANA": "GAMING", "AXS": "GAMING",
     # MEME and AI sectors added 2026-05-28. Cap stays at 2 per sector via
     # the global CORRELATED_SECTOR_LIMIT.
     "WIF": "MEME", "1000BONK": "MEME", "1000PEPE": "MEME",
-    "FET": "AI",   "RENDER": "AI",      "TAO": "AI",
+    "FET": "AI",   "RENDER": "AI",      "TAO": "AI",   "WLD": "AI",
 }
 
 # Authoritative leverage ceiling — capped at the strategy's leverage() callback
