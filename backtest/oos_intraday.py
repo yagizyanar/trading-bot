@@ -318,7 +318,7 @@ def run_year(year):
 
 def main():
     print("=" * 116)
-    print("ITEM 9 — 15m INTRADAY + DYNAMIC LEVERAGE (items 5-7 OFF / FLIP=0)  |  stop -5% · trail 8%/+10% · "
+    print("ITEM 9 — 15m INTRADAY + DYNAMIC LEVERAGE (items 5-7 OFF / FLIP=0)  |  stop -5% · trail 4%/+5% · "
           "no TP · fee 0.05%/side+funding · 1d cooldown · DYN LEV 1/2/3x by |signal|, NOTIONAL held CONSTANT")
     print("  (equal-weight; absolute level is NOT the sized book — see project_runportfolio_lookahead)")
     print("=" * 116)
