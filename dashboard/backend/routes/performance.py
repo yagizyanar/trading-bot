@@ -77,20 +77,19 @@ def _live_to_snapshot(session, bal: dict, pnl: dict | None,
     00:00 UTC boundary. Falls back to starting_wallet if no snapshot
     exists yet (the bot just started).
     """
-    from config.settings import PROJECT_ROOT
-    import json
-
-    # Starting wallet from config.json (dry_run_wallet)
-    try:
-        with open(PROJECT_ROOT / "config" / "config.json") as f:
-            cfg = json.load(f)
-        starting_wallet = float(cfg.get("dry_run_wallet", 10000))
-    except Exception:
-        starting_wallet = 10000.0
+    from config.settings import DRY_RUN_WALLET, DRY_RUN
 
     open_pnl = float((pnl or {}).get("open_pnl", 0.0) or 0.0)
     closed_pnl = float((pnl or {}).get("closed_pnl", 0.0) or 0.0)
-    equity = starting_wallet + open_pnl + closed_pnl
+    # Live: equity is the REAL exchange balance (bal.value/total). Dry-run: the
+    # reconcilable DRY_RUN_WALLET + pnl formula. (2026-06-06 go-live fix.)
+    if DRY_RUN:
+        starting_wallet = DRY_RUN_WALLET
+        equity = starting_wallet + open_pnl + closed_pnl
+    else:
+        _real = bal.get("value") or bal.get("total")
+        equity = float(_real) if _real not in (None, "") else (open_pnl + closed_pnl)
+        starting_wallet = equity
 
     # Daily / weekly baselines from prior snapshots
     now = datetime.now(timezone.utc)
@@ -125,7 +124,7 @@ def _live_to_snapshot(session, bal: dict, pnl: dict | None,
         "deployed_capital_pct": 0.0,
         "source": "freqtrade",
         "currency_symbol": bal.get("symbol") or bal.get("stake") or "USDT",
-        "dry_run": bool(bal.get("note") and "Simulated" in str(bal.get("note", ""))),
+        "dry_run": DRY_RUN,
     }
 
 

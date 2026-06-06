@@ -70,6 +70,10 @@ echo ">>> starting fresh book (moving dry-run sqlite aside)"
 
 # --- 4. flip dry_run -> false (string replace preserves formatting; asserts current = true) ---
 .venv/bin/python -c "p='config/config.json'; s=open(p).read(); assert '\"dry_run\": true' in s, 'dry_run is already not true — aborting flip'; open(p,'w').write(s.replace('\"dry_run\": true', '\"dry_run\": false', 1)); print('>>> config.json dry_run -> false')"
+# keep the bot's internal flag (config.settings.DRY_RUN, read from .env) in sync,
+# else the dashboard/routines stay stuck on 'paper'/dry_run_wallet (2026-06-06 fix).
+if grep -q "^DRY_RUN=" .env 2>/dev/null; then sed -i "s/^DRY_RUN=.*/DRY_RUN=false/" .env; else printf "\nDRY_RUN=false\n" >> .env; fi
+echo ">>> .env DRY_RUN -> false (dashboard/routines mode flag)"
 
 # --- 5. start + verify ---
 echo ">>> starting $SVC (LIVE)"

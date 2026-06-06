@@ -20,6 +20,8 @@ from typing import Optional
 
 import requests
 
+from config.settings import DRY_RUN
+
 log = logging.getLogger(__name__)
 
 CACHE_TTL_SECONDS = 5.0   # tight enough for ~5s WS pushes; Freqtrade copes fine
@@ -193,7 +195,7 @@ def map_freqtrade_trade(t: dict) -> dict:
         "reason_in":        t.get("enter_tag") or "freqtrade",
         "reason_out":       t.get("exit_reason"),
         "outcome":          _outcome_for(profit_abs, is_open),
-        "is_paper":         True,   # we run in dry_run; live mode flips this in the route
+        "is_paper":         DRY_RUN,   # reflects actual mode (config.json dry_run via .env)
     }
 
 

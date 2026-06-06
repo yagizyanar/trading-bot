@@ -136,9 +136,9 @@ def _default_portfolio_snapshot() -> dict:
     """
     try:
         from datetime import timedelta
-        from config.settings import DRY_RUN_WALLET
+        from config.settings import DRY_RUN_WALLET, DRY_RUN
         from dashboard.backend.freqtrade_client import (
-            fetch_closed_trades, fetch_profit, fetch_status,
+            fetch_closed_trades, fetch_profit, fetch_status, live_equity,
         )
 
         status = fetch_status()
@@ -150,7 +150,15 @@ def _default_portfolio_snapshot() -> dict:
 
         open_pnl = sum(float(t.get("profit_abs") or 0) for t in (status or []))
         closed_pnl_all = float((profit or {}).get("profit_closed_coin", 0) or 0)
-        equity = DRY_RUN_WALLET + open_pnl + closed_pnl_all
+        # Live: anchor on the REAL exchange balance. Dry-run: reconcilable
+        # DRY_RUN_WALLET + pnl formula. (2026-06-06 go-live fix.)
+        if DRY_RUN:
+            base_wallet = DRY_RUN_WALLET
+            equity = base_wallet + open_pnl + closed_pnl_all
+        else:
+            _le = live_equity()
+            equity = float(_le) if _le is not None else (open_pnl + closed_pnl_all)
+            base_wallet = equity if equity > 0 else 1.0
 
         now = datetime.now(timezone.utc)
         midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -174,8 +182,8 @@ def _default_portfolio_snapshot() -> dict:
             if close_dt >= week_start:
                 weekly_closed_pnl += pnl
 
-        daily_pnl_pct = daily_closed_pnl / DRY_RUN_WALLET if DRY_RUN_WALLET else 0.0
-        weekly_pnl_pct = weekly_closed_pnl / DRY_RUN_WALLET if DRY_RUN_WALLET else 0.0
+        daily_pnl_pct = daily_closed_pnl / base_wallet if base_wallet else 0.0
+        weekly_pnl_pct = weekly_closed_pnl / base_wallet if base_wallet else 0.0
 
         # Peak equity: max of historical peak and current equity.
         peak = equity

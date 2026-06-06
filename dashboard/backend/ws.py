@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
+from config.settings import DRY_RUN
 from database import PerformanceSnapshot, SentimentScore, SessionLocal
 from risk.lockfile import is_locked
 
@@ -84,7 +85,7 @@ async def _snapshot() -> dict:
                     "deployed_capital_pct": last_db.deployed_capital_pct,
                     "source": "snapshot",
                     "currency_symbol": "USDT",
-                    "dry_run": True,
+                    "dry_run": DRY_RUN,
                 }
             else:
                 perf = None
