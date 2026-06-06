@@ -171,15 +171,25 @@ export default function PortfolioChart({ live }) {
 
   const sym = latest?.currency_symbol || "USDT";
 
-  // Y-axis domains — equity gets its own scale; daily/weekly share the right axis
-  const equityValues = buffer.map((b) => b.equity).filter((v) => v != null);
+  // Y-axis domains — equity gets its own scale; daily/weekly share the right axis.
+  // Only POSITIVE, finite equities define the scale, so a transient 0/negative
+  // reconcile glitch (or any stale point) can't blow the Y-range out to [0, balance]
+  // and flatten the real line. Pad is a small % of the range (min $2) for sensitivity.
+  const equityValues = buffer.map((b) => b.equity).filter((v) => v != null && isFinite(v) && v > 0);
   const equityMin = equityValues.length ? Math.min(...equityValues) : 0;
   const equityMax = equityValues.length ? Math.max(...equityValues) : 0;
   const equityRange = equityMax - equityMin;
-  const equityPad = Math.max(equityRange * 0.15, 5);
+  const equityPad = Math.max(equityRange * 0.1, 2);
   const equityDomain = equityValues.length
     ? [equityMin - equityPad, equityMax + equityPad]
     : ["auto", "auto"];
+
+  // Plot data: null out any non-positive/invalid equity so the line gaps over a
+  // transient reconcile glitch rather than spiking down to 0.
+  const chartData = buffer.map((b) => ({
+    ...b,
+    equity: (b.equity != null && isFinite(b.equity) && b.equity > 0) ? b.equity : null,
+  }));
 
   return (
     <div className="rounded-xl bg-slate-800 p-4">
@@ -214,7 +224,7 @@ export default function PortfolioChart({ live }) {
       </div>
 
       <ResponsiveContainer width="100%" height={240}>
-        <ComposedChart data={buffer} margin={{ left: 4, right: 4, top: 4, bottom: 4 }}>
+        <ComposedChart data={chartData} margin={{ left: 4, right: 4, top: 4, bottom: 4 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
           <XAxis dataKey="tsLabel" stroke="#94a3b8" fontSize={11} minTickGap={40} />
           <YAxis yAxisId="eq"  orientation="left"  stroke="#10b981" fontSize={11} domain={equityDomain}

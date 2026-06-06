@@ -88,7 +88,15 @@ def _live_to_snapshot(session, bal: dict, pnl: dict | None,
         equity = starting_wallet + open_pnl + closed_pnl
     else:
         _real = bal.get("value") or bal.get("total")
-        equity = float(_real) if _real not in (None, "") else (open_pnl + closed_pnl)
+        if _real not in (None, ""):
+            equity = float(_real)
+        elif last_db is not None:
+            equity = float(last_db.total_equity)   # last known — avoid a ~0 reconcile spike
+        else:
+            equity = open_pnl + closed_pnl
+        # Final guard: never surface a non-positive equity (calc/reconcile glitch).
+        if equity <= 0 and last_db is not None:
+            equity = float(last_db.total_equity)
         starting_wallet = equity
 
     # Daily / weekly baselines from prior snapshots

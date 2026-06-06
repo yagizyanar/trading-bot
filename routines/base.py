@@ -157,8 +157,13 @@ def _default_portfolio_snapshot() -> dict:
             equity = base_wallet + open_pnl + closed_pnl_all
         else:
             _le = live_equity()
-            equity = float(_le) if _le is not None else (open_pnl + closed_pnl_all)
-            base_wallet = equity if equity > 0 else 1.0
+            # Don't invent equity from pnl alone when the live balance is briefly
+            # unavailable (reconcile window) — raise so we fall back to the last
+            # snapshot instead of writing a ~0 spike into the graph. (2026-06-06 fix.)
+            if _le is None or float(_le) <= 0:
+                raise RuntimeError("live balance unavailable/non-positive")
+            equity = float(_le)
+            base_wallet = equity
 
         now = datetime.now(timezone.utc)
         midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
