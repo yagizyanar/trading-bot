@@ -99,9 +99,10 @@ SENTIMENT_2X_THRESHOLD = 0.2
 # entry gate MARKOV_SMALL=0.1 and this) → SKIP, which HOLDS the current position
 # (populate_exit_trend only exits on a *strong opposite* decision, not a SKIP).
 # Cuts round-trip churn / fee drag from whipsawing on noise. 0.3 = the medium tier.
-# Item 7 DISABLED 2026-06-05 (user request, baseline config): 0 = no hysteresis,
-# any opposite signal flips immediately. Set back to 0.3 to re-enable.
-MARKOV_FLIP_THRESHOLD = 0.0
+# Item 7: DISABLED 2026-06-05 (0 = any opposite flips), RE-ENABLED 2026-06-07
+# (user) at 0.3 — weak opposite signals (0.1..0.3) HOLD the position (SKIP)
+# instead of flipping (anti-whipsaw; addresses the re-shorting in the 19-loss run).
+MARKOV_FLIP_THRESHOLD = 0.3
 
 ALLOWED_LONG_REGIMES  = ("Bull", "Sideways", "Euphoria")
 ALLOWED_SHORT_REGIMES = ("Bear", "Sideways")

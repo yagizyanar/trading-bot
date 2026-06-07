@@ -30,7 +30,7 @@ from markov.regime_detector import build_transition_matrix, label_regimes, signa
 from backtest.oos_multiyear import UNIVERSE, _client, _spot
 
 ENTRY_GATE = 0.2
-FLIP = 0.0   # item 7 hysteresis OFF (current deployed baseline config, 2026-06-05); was 0.3
+FLIP = 0.3   # item 7 hysteresis ON (2026-06-07, user) — weak opposite (0.1-0.3) holds, no flip
 STOP_PCT = 0.05
 TRAIL_PCT = 0.03        # trail 3% (2026-06-07, user) — tighter than the bake-off winner; whipsaw-prone
 TRAIL_ACTIVATE = 0.05   # activate at +5% (offset>trail required: 0.05>0.03)

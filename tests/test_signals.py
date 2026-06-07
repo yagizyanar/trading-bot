@@ -384,9 +384,9 @@ def test_vol_normalization_absent_is_neutral():
 # ---------------------------------------------------------------------------
 # Item 7 — hysteresis / re-entry band on flips
 # ---------------------------------------------------------------------------
-def test_hysteresis_disabled_flips_on_weak_opposite():
-    # Item 7 DISABLED 2026-06-05 (MARKOV_FLIP_THRESHOLD=0): a weak opposite (-0.2)
-    # now FLIPS the LONG straight to SHORT instead of holding.
+def test_hysteresis_holds_on_weak_opposite():
+    # Item 7 RE-ENABLED 2026-06-07 (MARKOV_FLIP_THRESHOLD=0.3): a weak opposite
+    # (-0.2, |-0.2| < 0.3) HOLDS the LONG (SKIP) instead of flipping to SHORT.
     d = evaluate_signal(
         "SOL",
         regime_result=_make_regime(signal=-0.2, regime="Bear"),
@@ -395,7 +395,8 @@ def test_hysteresis_disabled_flips_on_weak_opposite():
         capital=10000.0, cb_multiplier=1.0, cb_allows_new=True,
         current_position="LONG",
     )
-    assert d.decision == "SHORT"
+    assert d.decision == "SKIP"
+    assert "hysteresis" in (d.skip_reason or "")
 
 
 def test_hysteresis_allows_strong_flip():
@@ -438,8 +439,9 @@ def test_hysteresis_does_not_block_fresh_entry():
     assert d.decision == "LONG"
 
 
-def test_hysteresis_disabled_short_flips_on_weak_bullish():
-    # Item 7 DISABLED 2026-06-05: a weak bullish (0.2) now FLIPS the SHORT to LONG.
+def test_hysteresis_holds_short_on_weak_bullish():
+    # Item 7 RE-ENABLED 2026-06-07: a weak bullish (0.2, < 0.3) HOLDS the SHORT
+    # (SKIP), no flip to LONG.
     d = evaluate_signal(
         "SOL",
         regime_result=_make_regime(signal=0.2, regime="Bull"),
@@ -448,4 +450,5 @@ def test_hysteresis_disabled_short_flips_on_weak_bullish():
         capital=10000.0, cb_multiplier=1.0, cb_allows_new=True,
         current_position="SHORT",
     )
-    assert d.decision == "LONG"
+    assert d.decision == "SKIP"
+    assert "hysteresis" in (d.skip_reason or "")

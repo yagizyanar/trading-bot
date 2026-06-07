@@ -135,9 +135,10 @@ MAX_CAPITAL_DEPLOYED_PCT: Final[float] = 0.50
 # weighted by each coin's beta-to-BTC, may not exceed ±this. 3.0 ≈ "max 3 full
 # positions of net one-way beta" — stops 10 correlated same-direction trades
 # from becoming one giant undiversified bet (the -44% drawdown failure mode).
-# Item 6 net-beta cap DISABLED 2026-06-05 (user request, baseline config): 1e9 =
-# effectively unlimited one-way exposure. Set back to 3.0 to re-enable the cap.
-NET_BETA_BUDGET: Final[float] = 1e9
+# Item 6 net-beta cap: DISABLED 2026-06-05 (1e9 = unlimited), RE-ENABLED 2026-06-07
+# (user) at 3.0 after the 19-loss whipsaw (10 correlated shorts stopped together —
+# exactly the -44% one-way-bet failure mode this cap exists to prevent).
+NET_BETA_BUDGET: Final[float] = 3.0
 STOP_LOSS_PCT: Final[float] = 0.05
 # +15% take-profit. MUST match config/config.json::minimal_roi[0] (= 0.15):
 # Freqtrade enforces the actual ROI exit, while this constant only drives the
