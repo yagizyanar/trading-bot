@@ -28,11 +28,11 @@ from typing import Optional
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from config.settings import MEMORY_DIR, TARGET_COINS
+from config.settings import MEMORY_DIR, TARGET_COINS, MAX_LEVERAGE
 from database import (
     SessionLocal, SentimentScore, RegimeState, SignalLog, PerformanceSnapshot,
 )
-from signals.three_layer import _choose_leverage
+from signals.three_layer import _leverage_from_signal
 
 from .freqtrade_client import (
     fetch_balance, fetch_closed_trades, fetch_status,
@@ -161,6 +161,12 @@ def _check_position_sizes() -> Alert:
 
 
 def _check_leverage_24h(session: Session) -> Alert:
+    # With MAX_LEVERAGE < 2 no 2x trade can ever open (leverage is hard-capped), so
+    # the "2x-eligible but none opened" warning would false-fire forever. (2026-06-07)
+    if MAX_LEVERAGE < 2:
+        return Alert("leverage_24h", "green", "trading",
+                     f"Leverage fixed at {MAX_LEVERAGE}x (dynamic tiers off)",
+                     f"2x/3x disabled by MAX_LEVERAGE={MAX_LEVERAGE}; all trades open {MAX_LEVERAGE}x by design")
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(hours=24)
     lev2_in_24h = 0
@@ -192,7 +198,7 @@ def _check_leverage_24h(session: Session) -> Alert:
             direction = sl.decision if sl.decision != "SKIP" else (
                 "SHORT" if sl.markov_signal < 0 else "LONG"
             )
-            if _choose_leverage(direction, float(sl.sentiment_score), rg.regime) == 2:
+            if min(_leverage_from_signal(sl.markov_signal), MAX_LEVERAGE) == 2:
                 qualifying_coins += 1
     except Exception as exc:
         log.debug("leverage_24h: qualifying-coins query failed: %s", exc)
