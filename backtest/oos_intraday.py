@@ -32,8 +32,8 @@ from backtest.oos_multiyear import UNIVERSE, _client, _spot
 ENTRY_GATE = 0.2
 FLIP = 0.0   # item 7 hysteresis OFF (current deployed baseline config, 2026-06-05); was 0.3
 STOP_PCT = 0.05
-TRAIL_PCT = 0.08        # trail 8% — bake-off winner (2026-06-05): best 3yr return/Sharpe, least churn
-TRAIL_ACTIVATE = 0.10   # activate at +10% (offset>trail required)
+TRAIL_PCT = 0.03        # trail 3% (2026-06-07, user) — tighter than the bake-off winner; whipsaw-prone
+TRAIL_ACTIVATE = 0.05   # activate at +5% (offset>trail required: 0.05>0.03)
 FEE = 0.0005
 LOOKBACK = 365
 COOLDOWN_BARS = 96               # 1 day at 15m — post-hard-stop re-entry lock (StoplossGuard)

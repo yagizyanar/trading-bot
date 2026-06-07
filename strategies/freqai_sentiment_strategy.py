@@ -44,14 +44,14 @@ class FreqAISentimentStrategy(IStrategy):  # type: ignore[misc,valid-type]
     # old 2% trail caused 63% of exits and capped winners at +2.4% avg (only 4
     # trades ever >+8%), amputating the 20-day-momentum fat tail. minimal_roi
     # disabled (was +15%, fired 2x ever) so the trail manages the upside.
-    # 2026-06-05 trailing bake-off (oos_trail_compare.py, 15m, 2022-24): 8%/+10%
-    # beat both 4%/+5% and 6%/+8% on EVERY 3yr metric — compounded -35.0% vs
-    # -42.1% / -36.8%, best Sharpe, fewest trades (3876 vs 6707) and lowest fee
-    # drag (11.9% vs 20.5%). The tighter trails ~doubled churn with no return
-    # payoff, so the earlier-activation experiment is reverted to wider 8%/+10%.
+    # 2026-06-05 bake-off (oos_trail_compare.py): 8%/+10% beat 4%/+5% & 6%/+8% on
+    # every 3yr metric (tighter trails ~2x churn, no payoff). 2026-06-07 (user):
+    # tightened to 3%/+5% anyway — NB 3% < the 3-6% daily ATR, so expect heavy
+    # whipsaw on most coins; at 1x leverage this is a 3% PRICE trail. offset>trail
+    # (0.05>0.03) so Freqtrade accepts it.
     trailing_stop = True
-    trailing_stop_positive = 0.08
-    trailing_stop_positive_offset = 0.10
+    trailing_stop_positive = 0.03
+    trailing_stop_positive_offset = 0.05
     trailing_only_offset_is_reached = True
     process_only_new_candles = True
     use_exit_signal = True
