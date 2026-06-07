@@ -12,7 +12,7 @@ _FT_CONFIG = json.loads(
 
 
 def test_target_coins_count():
-    assert len(settings.TARGET_COINS) == 23  # LINK dropped 2026-06-04 (min-notional at $300)
+    assert len(settings.TARGET_COINS) == 25  # +WLD +UNI 2026-06-05; LINK dropped 2026-06-04
 
 
 def test_stoploss_on_exchange_enabled():
@@ -33,7 +33,7 @@ def test_freqai_removed_or_disabled():
 
 
 def test_pairs_match_target_coins():
-    assert len(settings.PAIRS) == 23
+    assert len(settings.PAIRS) == 25
     assert settings.PAIRS[0] == "SOL/USDT"
 
 

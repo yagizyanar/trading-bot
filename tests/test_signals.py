@@ -20,8 +20,16 @@ from signals.three_layer import (
     TARGET_DAILY_VOL, VOL_NORM_MIN, VOL_NORM_MAX,
     MARKOV_FLIP_THRESHOLD,
     _vol_normalization_multiplier,
+    _leverage_from_signal,
     evaluate_signal,
 )
+from config.settings import MAX_LEVERAGE
+
+
+def _lev(s: float) -> int:
+    """Expected leverage = signal tier capped by MAX_LEVERAGE — mirrors
+    evaluate_signal so size assertions stay correct across leverage-config changes."""
+    return min(_leverage_from_signal(s), MAX_LEVERAGE)
 
 
 def _ohlcv(prices):
@@ -94,8 +102,8 @@ def _make_tech(label="BULL", trend_up=True):
 def test_long_base_size_tiers():
     """Markov signal alone decides direction + base size."""
     for sig, expect_pct in [
-        (0.6, BASE_FULL_PCT / 3),     # >0.5 → 3x lev → size /3 (notional = base)
-        (0.4, BASE_MEDIUM_PCT / 2),   # >0.3 → 2x lev → size /2
+        (0.6, BASE_FULL_PCT / _lev(0.6)),     # >0.5 → 3x lev → size /3 (notional = base)
+        (0.4, BASE_MEDIUM_PCT / _lev(0.4)),   # >0.3 → 2x lev → size /2
         (0.15, BASE_SMALL_PCT),       # >0.1 → 1x lev → size unchanged
     ]:
         d = evaluate_signal(
@@ -124,8 +132,8 @@ def test_dead_zone_skips():
 
 def test_short_tiers():
     for sig, expect_pct in [
-        (-0.6, BASE_FULL_PCT / 3),    # 3x lev
-        (-0.4, BASE_MEDIUM_PCT / 2),  # 2x lev
+        (-0.6, BASE_FULL_PCT / _lev(0.6)),    # 3x lev
+        (-0.4, BASE_MEDIUM_PCT / _lev(0.4)),  # 2x lev
         (-0.15, BASE_SMALL_PCT),      # 1x lev
     ]:
         d = evaluate_signal(
@@ -152,8 +160,8 @@ def test_sentiment_reduces_long_size_but_does_not_skip():
         capital=10000.0, cb_multiplier=1.0, cb_allows_new=True,
     )
     assert d.decision == "LONG"
-    assert d.position_size_pct == pytest.approx(0.03 * 0.50 / 2)   # 0.4 signal → 2x → size /2
-    assert d.dollars == pytest.approx(75.0)
+    assert d.position_size_pct == pytest.approx(0.03 * 0.50 / _lev(0.4))   # 0.4 signal → 2x → size /2
+    assert d.dollars == pytest.approx(10000 * 0.03 * 0.50 / _lev(0.4))
 
 
 def test_sentiment_negative_still_trades_long():
@@ -166,7 +174,7 @@ def test_sentiment_negative_still_trades_long():
         capital=10000.0, cb_multiplier=1.0, cb_allows_new=True,
     )
     assert d.decision == "LONG"
-    assert d.position_size_pct == pytest.approx(0.03 * 0.25 / 2)   # 0.4 signal → 2x
+    assert d.position_size_pct == pytest.approx(0.03 * 0.25 / _lev(0.4))   # 0.4 signal → 2x
 
 
 def test_sentiment_aligned_for_short_keeps_size():
@@ -179,7 +187,7 @@ def test_sentiment_aligned_for_short_keeps_size():
         capital=10000.0, cb_multiplier=1.0, cb_allows_new=True,
     )
     assert d.decision == "SHORT"
-    assert d.position_size_pct == pytest.approx(BASE_MEDIUM_PCT * 1.0 / 2)   # -0.4 → 2x
+    assert d.position_size_pct == pytest.approx(BASE_MEDIUM_PCT * 1.0 / _lev(0.4))   # -0.4 → 2x
 
 
 # ---------------------------------------------------------------------------
@@ -195,7 +203,7 @@ def test_tech_contradiction_reduces_size_25():
         capital=10000.0, cb_multiplier=1.0, cb_allows_new=True,
     )
     assert d.decision == "LONG"
-    assert d.position_size_pct == pytest.approx(BASE_MEDIUM_PCT * TECH_MULT_CONTRADICTS / 2)   # 0.4 → 2x
+    assert d.position_size_pct == pytest.approx(BASE_MEDIUM_PCT * TECH_MULT_CONTRADICTS / _lev(0.4))   # 0.4 → 2x
 
 
 def test_tech_neutral_does_not_reduce():
@@ -207,7 +215,7 @@ def test_tech_neutral_does_not_reduce():
         capital=10000.0, cb_multiplier=1.0, cb_allows_new=True,
     )
     assert d.decision == "LONG"
-    assert d.position_size_pct == pytest.approx(BASE_MEDIUM_PCT / 2)   # 0.4 → 2x
+    assert d.position_size_pct == pytest.approx(BASE_MEDIUM_PCT / _lev(0.4))   # 0.4 → 2x
 
 
 # ---------------------------------------------------------------------------
@@ -222,8 +230,8 @@ def test_sideways_halves_and_forces_1x():
         capital=10000.0, cb_multiplier=1.0, cb_allows_new=True,
     )
     assert d.decision == "LONG"
-    assert d.position_size_pct == pytest.approx(BASE_FULL_PCT * SIDEWAYS_SIZE_MULT / 3)   # 0.6 → 3x
-    assert d.leverage == 3   # leverage now purely |signal|-based (0.6 → 3x); no Sideways override
+    assert d.position_size_pct == pytest.approx(BASE_FULL_PCT * SIDEWAYS_SIZE_MULT / _lev(0.6))   # 0.6 → 3x
+    assert d.leverage == _lev(0.6)   # leverage now purely |signal|-based (0.6 → 3x); no Sideways override
 
 
 # ---------------------------------------------------------------------------
@@ -264,8 +272,8 @@ def test_cb_multiplier_scales_position():
         capital=10000.0, cb_multiplier=0.5, cb_allows_new=True,
     )
     assert d.decision == "LONG"
-    # Full base 5% / 3x lev (0.6 signal) × cb 0.5 → 0.83% margin
-    assert d.position_size_pct == pytest.approx(BASE_FULL_PCT * 0.5 / 3)
+    # Full base 5% / _lev(0.6)x lev (0.6 signal) × cb 0.5 → 0.83% margin
+    assert d.position_size_pct == pytest.approx(BASE_FULL_PCT * 0.5 / _lev(0.6))
 
 
 # ---------------------------------------------------------------------------
@@ -280,7 +288,7 @@ def test_leverage_strong_signal_3x():
         technical=_make_tech("BULL"),
         capital=10000.0, cb_multiplier=1.0, cb_allows_new=True,
     )
-    assert d.leverage == 3
+    assert d.leverage == _lev(0.6)
 
 
 def test_leverage_medium_signal_2x():
@@ -292,7 +300,7 @@ def test_leverage_medium_signal_2x():
         technical=_make_tech("BULL"),
         capital=10000.0, cb_multiplier=1.0, cb_allows_new=True,
     )
-    assert d.leverage == 2
+    assert d.leverage == _lev(0.4)
 
 
 def test_leverage_weak_signal_1x():
@@ -316,7 +324,7 @@ def test_leverage_short_strong_3x():
         technical=_make_tech("BEAR", trend_up=False),
         capital=10000.0, cb_multiplier=1.0, cb_allows_new=True,
     )
-    assert d.leverage == 3
+    assert d.leverage == _lev(0.6)
 
 
 # ---------------------------------------------------------------------------
@@ -345,7 +353,7 @@ def test_vol_norm_disabled_high_vol_not_shrunk():
         technical=_make_tech("BULL"),
         capital=10000.0, cb_multiplier=1.0, cb_allows_new=True,
     )
-    assert d.position_size_pct == pytest.approx(BASE_FULL_PCT / 3)   # 0.6 signal → 3x → margin /3
+    assert d.position_size_pct == pytest.approx(BASE_FULL_PCT / _lev(0.6))   # 0.6 signal → 3x → margin /3
 
 
 def test_vol_norm_disabled_low_vol_not_grown():
@@ -358,7 +366,7 @@ def test_vol_norm_disabled_low_vol_not_grown():
         technical=_make_tech("BULL"),
         capital=10000.0, cb_multiplier=1.0, cb_allows_new=True,
     )
-    assert d.position_size_pct == pytest.approx(BASE_FULL_PCT / 3)   # 0.6 signal → 3x → margin /3
+    assert d.position_size_pct == pytest.approx(BASE_FULL_PCT / _lev(0.6))   # 0.6 signal → 3x → margin /3
 
 
 def test_vol_normalization_absent_is_neutral():
@@ -370,7 +378,7 @@ def test_vol_normalization_absent_is_neutral():
         technical=_make_tech("BULL"),
         capital=10000.0, cb_multiplier=1.0, cb_allows_new=True,
     )
-    assert d.position_size_pct == pytest.approx(BASE_FULL_PCT / 3)   # 0.6 signal → 3x → margin /3
+    assert d.position_size_pct == pytest.approx(BASE_FULL_PCT / _lev(0.6))   # 0.6 signal → 3x → margin /3
 
 
 # ---------------------------------------------------------------------------

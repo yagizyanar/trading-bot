@@ -45,6 +45,7 @@ from typing import Optional
 from markov.regime_detector import RegimeResult
 from sentiment.analyzer import UnifiedScore
 
+from config.settings import MAX_LEVERAGE
 from .technical import TechnicalSnapshot
 
 
@@ -284,7 +285,10 @@ def evaluate_signal(
     # vol-normalization. Restore `_vol_normalization_multiplier(regime_result.realized_vol)` to re-enable.
     vol_mult    = 1.0
 
-    lev       = _leverage_from_signal(ms)   # dynamic leverage by |signal| (2026-06-05)
+    # Tier capped by MAX_LEVERAGE (=1 → uniform 1x, 2026-06-06). The cap is REQUIRED
+    # here for notional-constancy: size divides by `lev`, so it MUST equal the strategy
+    # leverage() callback (which also caps at MAX_LEVERAGE) — else notional drifts.
+    lev       = min(_leverage_from_signal(ms), MAX_LEVERAGE)
     # Size divides by leverage to keep NOTIONAL constant (notional = base × multipliers).
     final_pct = base_pct * sent_mult * tech_mult * regime_mult * vol_mult * cb_multiplier / lev
     dollars   = capital * final_pct

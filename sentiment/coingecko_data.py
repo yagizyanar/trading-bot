@@ -54,6 +54,8 @@ COINGECKO_IDS: dict[str, str] = {
     "FET": "fetch-ai",
     "RENDER": "render-token",
     "TAO": "bittensor",
+    "WLD": "worldcoin-wld",
+    "UNI": "uniswap",
 }
 
 
