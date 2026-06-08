@@ -6,7 +6,7 @@ mechanics. Now models the 1-day post-stop cooldown (StoplossGuard) and runs
 2022/2023/2024.
 
 Live config replicated (config.json):
-  stop -5% from entry · trailing 8% activating at +10% · no flat TP
+  stop -5% from entry · trailing 3% activating at +5% · no flat TP
   fee 0.05%/side · funding at the 8h marks · 1-day (96-bar) cooldown after a
   HARD STOP (matches StoplossGuard: re-entry blocked for 24h after a losing stop;
   flips and winning trailing exits unaffected — trailing only fires in profit).
@@ -318,8 +318,8 @@ def run_year(year):
 
 def main():
     print("=" * 116)
-    print("ITEM 9 — 15m INTRADAY + DYNAMIC LEVERAGE (items 5-7 OFF / FLIP=0)  |  stop -5% · trail 8%/+10% · "
-          "no TP · fee 0.05%/side+funding · 1d cooldown · DYN LEV 1/2/3x by |signal|, NOTIONAL held CONSTANT")
+    print("ITEM 9 — 15m INTRADAY (current live: item5 OFF, items6-7 ON / FLIP=0.3, 1x lev)  |  stop -5% · "
+          "trail 3%/+5% · no TP · fee 0.05%/side+funding · 1d cooldown")
     print("  (equal-weight; absolute level is NOT the sized book — see project_runportfolio_lookahead)")
     print("=" * 116)
     for y in YEARS:
