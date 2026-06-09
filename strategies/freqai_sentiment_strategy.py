@@ -57,17 +57,24 @@ class FreqAISentimentStrategy(IStrategy):  # type: ignore[misc,valid-type]
     use_exit_signal = True
     exit_profit_only = False
     minimal_roi = {"0": 10}
-    # 1-day cooldown after a LOSING stop (StoplossGuard) — kills the 15m hard-stop
+    # 2-day cooldown after a LOSING stop (StoplossGuard) — kills the 15m hard-stop
     # re-entry churn that the intraday harness exposed (item 9). Locks only the pair
     # that stopped, only after a losing stop (required_profit default 0), so signal
     # flips and winning trailing exits are unaffected. Strategy-level: config-level
     # protections are DEPRECATED in freqtrade 2026.4.
+    # 2026-06-09: widened 1d -> 2d (96 -> 192 candles) per signal_research.py Task 3 —
+    # the 2-day cooldown was the best whipsaw/trend balance (the knee of the 1/2/3/5d
+    # sweep): cut the modeled 2024 churn from -38% to -5% for only a small trend
+    # give-up, best Sharpe of any cooldown, and unlike the entry-window rule it keeps
+    # trend-year upside (it only fires after a loss, and trend years stop out less).
+    # Effective timeframe is 15m (config.json overrides the strategy's 1h attr), so
+    # 192 x 15m = 2 days. lookback kept == stop_duration (both 192) as before.
     protections = [
         {
             "method": "StoplossGuard",
-            "lookback_period_candles": 96,    # 96 x 15m = 1 day
+            "lookback_period_candles": 192,   # 192 x 15m = 2 days
             "trade_limit": 1,
-            "stop_duration_candles": 96,
+            "stop_duration_candles": 192,     # lock the pair for 2 days after a losing stop
             "only_per_pair": True,
         }
     ]
