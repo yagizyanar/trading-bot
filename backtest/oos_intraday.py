@@ -2,17 +2,17 @@
 
 Replays the daily Markov signal on real 15m FUTURES bars with the deployed exit
 stack, resolving intraday sequence — the only harness that can test live exit
-mechanics. Now models the 1-day post-stop cooldown (StoplossGuard) and runs
+mechanics. Now models the 2-day post-stop cooldown (StoplossGuard) and runs
 2022/2023/2024.
 
 Live config replicated (config.json):
   stop -5% from entry · trailing 3% activating at +5% · no flat TP
-  fee 0.05%/side · funding at the 8h marks · 1-day (96-bar) cooldown after a
-  HARD STOP (matches StoplossGuard: re-entry blocked for 24h after a losing stop;
+  fee 0.05%/side · funding at the 8h marks · 2-day (192-bar) cooldown after a
+  HARD STOP (matches StoplossGuard: re-entry blocked for 48h after a losing stop;
   flips and winning trailing exits unaffected — trailing only fires in profit).
 
 Books reported per year (equal-weight): signal-only (no stops), daily-close
-(the daily harness), 15m no-cooldown, 15m + 1-day cooldown (DEPLOYED). Universe =
+(the daily harness), 15m no-cooldown, 15m + 2-day cooldown (DEPLOYED). Universe =
 13-coin clean set. NOTE: absolute returns are EQUAL-WEIGHT, not the deployed sized
 book (whose 2024 headline was a look-ahead artifact — see project_runportfolio_lookahead).
 """
@@ -36,7 +36,7 @@ TRAIL_PCT = 0.03        # trail 3% (2026-06-07, user) — tighter than the bake-
 TRAIL_ACTIVATE = 0.05   # activate at +5% (offset>trail required: 0.05>0.03)
 FEE = 0.0005
 LOOKBACK = 365
-COOLDOWN_BARS = 96               # 1 day at 15m — post-hard-stop re-entry lock (StoplossGuard)
+COOLDOWN_BARS = 192              # 2 days at 15m — post-hard-stop re-entry lock (StoplossGuard); synced to live 2026-06-09 (was 96/1d)
 CACHE = PROJECT_ROOT / ".cache_15m"
 YEARS = [2022, 2023, 2024]
 

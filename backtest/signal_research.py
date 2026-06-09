@@ -29,8 +29,13 @@ from backtest.oos_multiyear import _client
 from backtest.oos_intraday import (
     _fetch_15m, _funding_events, _bars_arrays, _daily_targets, _daily_returns,
     _portfolio, _sharpe, _maxdd, _exitmix, UNIVERSE, YEARS,
-    ENTRY_GATE, FLIP, STOP_PCT, TRAIL_PCT, TRAIL_ACTIVATE, FEE, COOLDOWN_BARS,
+    ENTRY_GATE, FLIP, STOP_PCT, TRAIL_PCT, TRAIL_ACTIVATE, FEE,
 )
+
+# Research baseline = 1-day post-stop cooldown (15m bars), kept INDEPENDENT of the
+# live StoplossGuard (synced to 2d/192 in oos_intraday on 2026-06-09) so Task 1/2 and
+# the Task 3 baseline stay reproducible. Task 3 passes its own cooldown_bars (96*d).
+COOLDOWN_BARS = 96
 
 LB4H = 240   # 4H bars (~40d) for the transition matrix
 CACHE4 = PROJECT_ROOT / ".cache_4h"
